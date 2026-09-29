@@ -25,3 +25,7 @@
 运行 `pnpm run check`。涉及布局、拖动、横向滚动、通知或窗口尺寸的修改还需在 Electron 实际窗口验证；浏览器测试不是桌面验收的替代。
 
 提交问题时避免附 API 密钥、完整个人会话或未脱敏的连接器凭据。
+
+## WhalePod 应用名称
+
+本地分发构建的 productName、菜单、启动提示与窗口标题使用 WhalePod。Bundle ID、内部插件名、`~/.dsh` 和 Electron 用户数据目录保持原值，升级时保留原会话与设置。首次从独立布局插件升级到内置插件时，原插件会备份到 profile 内的 `.whalepod-plugin-backups/`，再连接内置版本。

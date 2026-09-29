@@ -154,7 +154,7 @@ index e27554fe8a..92e099258f 100644
  
  | 决策 | 原因 | 直接结果 |
 diff --git a/apps/desktop/electron-builder.config.mjs b/apps/desktop/electron-builder.config.mjs
-index 4dfb363693..d2fbd677fc 100644
+index 4dfb363693..9966a3af21 100644
 --- a/apps/desktop/electron-builder.config.mjs
 +++ b/apps/desktop/electron-builder.config.mjs
 @@ -34,11 +34,18 @@ export function createElectronBuilderConfig(
@@ -179,7 +179,19 @@ index 4dfb363693..d2fbd677fc 100644
    const windowsSigner = packagesWindows && !unsigned
      ? createWindowsTokenSigner({
          certificateFile: env.DSH_DESKTOP_WINDOWS_CER_FILE,
-@@ -71,13 +78,16 @@ export function createElectronBuilderConfig(
+@@ -54,8 +61,9 @@ export function createElectronBuilderConfig(
+   const buildPaths = desktopTargetBuildPaths(resolveDesktopBuildTarget(env, hostPlatform, hostArch))
+   return {
+     appId,
+-    productName: 'DeepSeek Harness',
+-    artifactName: 'deepseek-harness-${version}-${os}-${arch}.${ext}',
++    productName: localAdhoc ? 'WhalePod' : 'DeepSeek Harness',
++    ...(localAdhoc ? { extraMetadata: { productName: 'WhalePod' } } : {}),
++    artifactName: (localAdhoc ? 'WhalePod' : 'deepseek-harness') + '-${version}-${os}-${arch}.${ext}', 
+     directories: { output: unsigned ? join(buildPaths.root, 'unsigned-artifacts') : buildPaths.artifacts },
+     asar: true,
+     files: [
+@@ -71,13 +79,16 @@ export function createElectronBuilderConfig(
        { from: join(buildPaths.dsh, 'node_modules'), to: 'dsh/node_modules' },
      ],
      mac: {
@@ -275,16 +287,17 @@ index 6883c978ac..ddde7564b5 100644
    pluginsList: 'dsh-desktop:plugins-list',
    pluginsAdd: 'dsh-desktop:plugins-add',
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index a73a6223a5..f53c003786 100644
+index a73a6223a5..7d628c269e 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
-@@ -10,10 +10,13 @@ import {
+@@ -10,10 +10,14 @@ import {
    ipcMain,
    Menu,
    protocol,
 +  shell,
    type IpcMainInvokeEvent,
  } from 'electron'
++import { WHALEPOD_NAME, LEGACY_USER_DATA_DIRECTORY, desktopBrandText } from './branding.ts'
 +import { externalWebsite } from './external-links.ts'
  import { resolveDesktopPaths } from './paths.ts'
  import { DesktopProjectManager, type DesktopProjectHooks } from './project-manager.ts'
@@ -292,7 +305,23 @@ index a73a6223a5..f53c003786 100644
  import { DesktopHostProcess } from './host-process.ts'
  import { DesktopBackendController, type DesktopBackendState } from './backend-controller.ts'
  import { DESKTOP_IPC, type DesktopUpdateState } from './ipc.ts'
-@@ -27,6 +30,7 @@ const SCHEME = 'dsh-app'
+@@ -23,10 +27,23 @@ import { DesktopUpdateCoordinator } from './update-coordinator.ts'
+ import { desktopErrorState } from './startup-error.ts'
+ import { startupFailureDocument } from './startup-document.ts'
+ 
++// Electron derives userData from productName. Preserve the existing desktop
++// settings directory explicitly before ready when applying the public brand.
++if (app.name === WHALEPOD_NAME) {
++  app.setPath('userData', join(app.getPath('appData'), LEGACY_USER_DATA_DIRECTORY))
++}
++function desktopLocale() {
++  const locale = resolveDesktopLocale(app.getLocale())
++  return { ...locale, messages: Object.fromEntries(Object.entries(locale.messages).map(
++    ([key, value]) => [key, desktopBrandText(value, app.name)],
++  )) as typeof locale.messages }
++}
++
+ const SCHEME = 'dsh-app'
  let focusPrimaryWindow = (): void => {}
  type RecoveryAction = 'restart' | 'plugins' | 'reset'
  let profileRecoveryAvailable = (): boolean => false
@@ -300,7 +329,16 @@ index a73a6223a5..f53c003786 100644
  const emergencyPages = new WeakMap<BrowserWindow, { url: string; message: string; busy: boolean }>()
  let recoverApplication = (action: RecoveryAction): Promise<void> => {
    if (action !== 'restart') return Promise.reject(new Error('Desktop recovery could not initialize; reinstall the application'))
-@@ -87,24 +91,37 @@ function developmentHostInspectPort(enabled: boolean): number | undefined {
+@@ -36,7 +53,7 @@ let recoverApplication = (action: RecoveryAction): Promise<void> => {
+ }
+ 
+ async function showEmergencyDocument(window: BrowserWindow, message: string): Promise<void> {
+-  const document = startupFailureDocument(resolveDesktopLocale(app.getLocale()), message, profileRecoveryAvailable())
++  const document = startupFailureDocument(desktopLocale(), message, profileRecoveryAvailable())
+   const url = `data:text/html;charset=utf-8,${encodeURIComponent(document)}`
+   emergencyPages.set(window, { url, message, busy: false })
+   await window.loadURL(url)
+@@ -87,24 +104,44 @@ function developmentHostInspectPort(enabled: boolean): number | undefined {
    return port
  }
  
@@ -323,6 +361,13 @@ index a73a6223a5..f53c003786 100644
      },
    })
 -  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
++  if (app.name === WHALEPOD_NAME) {
++    window.setTitle(WHALEPOD_NAME)
++    window.on('page-title-updated', (event, title) => {
++      event.preventDefault()
++      window.setTitle(desktopBrandText(title, app.name))
++    })
++  }
 +  if (integratedChrome) integratedWindows.add(window)
 +  const openWebsite = (value: string): void => {
 +    const url = externalWebsite(value)
@@ -341,7 +386,7 @@ index a73a6223a5..f53c003786 100644
      const page = emergencyPages.get(window)
      if (page === undefined || page.busy || window.webContents.getURL() !== page.url) return
      const action = new URL(url)
-@@ -148,6 +165,7 @@ async function serveShellAsset(request: Request): Promise<Response> {
+@@ -148,6 +185,7 @@ async function serveShellAsset(request: Request): Promise<Response> {
  }
  
  async function main(): Promise<void> {
@@ -349,7 +394,16 @@ index a73a6223a5..f53c003786 100644
    const resources = runtimeResources()
    const paths = resolveDesktopPaths()
    const development = app.isPackaged ? undefined : join(app.getAppPath(), '.desktop-build', 'development', 'project')
-@@ -170,6 +188,12 @@ async function main(): Promise<void> {
+@@ -161,7 +199,7 @@ async function main(): Promise<void> {
+   let pluginWindow: BrowserWindow | undefined
+   let shellInstallerOwnsQuit = false
+   let updateState: DesktopUpdateState = { phase: 'idle' }
+-  const locale = resolveDesktopLocale(app.getLocale())
++  const locale = desktopLocale()
+   const messages = locale.messages
+   const appPreload = fileURLToPath(new URL('./preload-app.cjs', import.meta.url))
+   const managementPreload = fileURLToPath(new URL('./preload.cjs', import.meta.url))
+@@ -170,6 +208,12 @@ async function main(): Promise<void> {
    let navigation: { window: BrowserWindow; url: string; promise: Promise<void> } | undefined
    let emergencyDocument = false
  
@@ -362,7 +416,7 @@ index a73a6223a5..f53c003786 100644
    const showEmergencyError = async (error: unknown): Promise<void> => {
      if (quitting || emergencyDocument) return
      emergencyDocument = true
-@@ -204,7 +228,7 @@ async function main(): Promise<void> {
+@@ -204,7 +248,7 @@ async function main(): Promise<void> {
      if (development === undefined) manager.assertProfileRuntime(activeProject)
      const hostInspectPort = developmentHostInspectPort(development !== undefined)
      const host = new DesktopHostProcess(resources.node, development ?? resources.dsh, activeProject,
@@ -371,7 +425,7 @@ index a73a6223a5..f53c003786 100644
      return {
        start: () => host.start(),
        stop: () => host.stop(),
-@@ -305,12 +329,28 @@ async function main(): Promise<void> {
+@@ -305,12 +349,28 @@ async function main(): Promise<void> {
      await navigateMain(startupUrl)
      try {
        await manager.mutate(mutation, hooks)
@@ -400,7 +454,7 @@ index a73a6223a5..f53c003786 100644
    ipcMain.handle(DESKTOP_IPC.localeGet, (event) => {
      assertDesktopSender(event, ['shell'])
      return locale
-@@ -434,6 +474,7 @@ async function main(): Promise<void> {
+@@ -434,6 +494,7 @@ async function main(): Promise<void> {
      void pluginWindow.loadURL(`${SCHEME}://shell/plugin-manager.html`)
    }
  
@@ -408,7 +462,7 @@ index a73a6223a5..f53c003786 100644
    Menu.setApplicationMenu(Menu.buildFromTemplate([{
      label: process.platform === 'darwin' ? app.name : messages.application,
      submenu: [
-@@ -447,10 +488,10 @@ async function main(): Promise<void> {
+@@ -447,10 +508,10 @@ async function main(): Promise<void> {
        { type: 'separator' },
        { role: 'quit' },
      ],
@@ -447,10 +501,49 @@ index c05b749a05..bfadf68bf2 100644
 +    } : {}),
 +  })
 diff --git a/apps/desktop/src/profile-packages.ts b/apps/desktop/src/profile-packages.ts
-index 1cb907ffa7..7bba606992 100644
+index 1cb907ffa7..d454478028 100644
 --- a/apps/desktop/src/profile-packages.ts
 +++ b/apps/desktop/src/profile-packages.ts
-@@ -232,7 +232,10 @@ export function validateDesktopPluginGraph(
+@@ -1,7 +1,7 @@
+ /** Desktop-owned host links and validation of the external plugin dependency graph. */
+ 
+ import { createHash } from 'node:crypto'
+-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
++import { existsSync, lstatSync, mkdirSync, mkdtempSync, renameSync, readFileSync, readlinkSync, realpathSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+ import { createRequire } from 'node:module'
+ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+ import { satisfies } from 'semver'
+@@ -106,11 +106,27 @@ export function unlinkDesktopHostPackages(profile: string): void {
+  * @param runtime - Verified release descriptor.
+  */
+ export function linkDesktopHostPackages(profile: string, root: string, runtime: DesktopRuntimeDescriptor): void {
+-  unlinkDesktopHostPackages(profile)
++  const owned = new Map((readDesktopProfileState(profile)?.links ?? []).map(link => [link.name, link.target]))
+   const links = runtime.sharedPackages.map(entry => ({ name: entry.name, target: runtimePath(root, entry.path) }))
+   for (const link of links) {
+     const path = join(profile, 'node_modules', link.name)
+-    if (stat(path) !== undefined) throw new Error(`desktop profile: plugin installed reserved host package ${link.name}`)
++    const entry = stat(path)
++    if (entry?.isSymbolicLink() && resolve(dirname(path), readlinkSync(path)) === owned.get(link.name)) continue
++    if (entry !== undefined) {
++      // First upgrade from the locally installed layout to the bundled release.
++      // Keep the exact old plugin outside node_modules; never reset profile data.
++      if (link.name !== 'dsh-plugin-matou-layout' || manifest(path).name !== link.name) {
++        throw new Error(`desktop profile: plugin installed reserved host package ${link.name}`)
++      }
++      const backups = join(profile, '.whalepod-plugin-backups')
++      mkdirSync(backups, { recursive: true })
++      const backup = mkdtempSync(join(backups, 'layout-'))
++      renameSync(path, join(backup, link.name))
++    }
++  }
++  unlinkDesktopHostPackages(profile)
++  for (const link of links) {
++    const path = join(profile, 'node_modules', link.name)
+     mkdirSync(dirname(path), { recursive: true })
+     symlinkSync(link.target, path, process.platform === 'win32' ? 'junction' : 'dir')
+   }
+@@ -232,7 +248,10 @@ export function validateDesktopPluginGraph(
    }
    for (const name of activePlugins) {
      const path = packageFrom(profile, name)
@@ -690,6 +783,35 @@ index 64047c0c0c..4d4136aec0 100644
 +  const file = {} as File
 +  expect(api.getPathForFile(file)).toBe('/tmp/skills')
 +  expect(electron.webUtils.getPathForFile).toHaveBeenCalledWith(file)
++})
+diff --git a/apps/desktop/tests/profile-packages.spec.ts b/apps/desktop/tests/profile-packages.spec.ts
+index d419c962f2..e474b3a859 100644
+--- a/apps/desktop/tests/profile-packages.spec.ts
++++ b/apps/desktop/tests/profile-packages.spec.ts
+@@ -1,5 +1,5 @@
+ import { execFileSync } from 'node:child_process'
+-import { mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
++import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+ import { pathToFileURL } from 'node:url'
+@@ -76,3 +76,17 @@ it('rejects private package links instead of following cycles or old transaction
+   symlinkSync(plugin, join(profile, 'node_modules/alias'), process.platform === 'win32' ? 'junction' : 'dir')
+   expect(() =>{  validateDesktopPluginGraph(profile, dsh, runtime, ['plugin']) }).toThrow(/linked private package/u)
+ })
++
++it('backs up the legacy layout plugin when a release starts bundling it', () => {
++  const { dsh, runtime, profile } = fixture()
++  const name = 'dsh-plugin-matou-layout'
++  writePackage(join(dsh, 'node_modules'), name)
++  writePackage(join(profile, 'node_modules'), name, {}, 'export default "legacy"')
++  const bundled = { ...runtime, sharedPackages: [...runtime.sharedPackages, { name, path: `node_modules/${name}` }] }
++  linkDesktopHostPackages(profile, dsh, bundled)
++  expect(realpathSync(join(profile, 'node_modules', name))).toBe(realpathSync(join(dsh, 'node_modules', name)))
++  const backups = join(profile, '.whalepod-plugin-backups')
++  expect(readFileSync(join(backups, readdirSync(backups)[0]!, name, 'index.js'), 'utf8')).toContain('legacy')
++  linkDesktopHostPackages(profile, dsh, bundled)
++  expect(readdirSync(backups)).toHaveLength(1)
 +})
 diff --git a/packages/api/session-controller/src/client/contract/sessions.ts b/packages/api/session-controller/src/client/contract/sessions.ts
 index 08c13a208e..114683b0da 100644
@@ -2196,6 +2318,21 @@ index a2773904c8..b4382dffb5 100644
        '@deepseek-ai/dsh-launch-environment':
          specifier: workspace:^
          version: link:../../packages/util/launch-environment
+diff --git a/apps/desktop/src/branding.ts b/apps/desktop/src/branding.ts
+new file mode 100644
+index 0000000000..7aa19ae9f2
+--- /dev/null
++++ b/apps/desktop/src/branding.ts
+@@ -0,0 +1,9 @@
++/** Presentation only: profile names, plugin ids and bundle id remain stable. */
++export const WHALEPOD_NAME = 'WhalePod'
++export const LEGACY_USER_DATA_DIRECTORY = '@deepseek-ai/dsh-desktop'
++
++export function desktopBrandText(text: string, name: string): string {
++  if (name !== WHALEPOD_NAME) return text
++  return text.replaceAll('DeepSeek Harness', WHALEPOD_NAME)
++    .replace(/DSH(?: 本地构建| Local Build)?/g, WHALEPOD_NAME)
++}
 diff --git a/apps/desktop/src/external-links.ts b/apps/desktop/src/external-links.ts
 new file mode 100644
 index 0000000000..93baed551c
@@ -2263,6 +2400,27 @@ index 0000000000..3ccd184628
 +    return { ...env }
 +  }
 +}
+diff --git a/apps/desktop/tests/branding.spec.ts b/apps/desktop/tests/branding.spec.ts
+new file mode 100644
+index 0000000000..b959816378
+--- /dev/null
++++ b/apps/desktop/tests/branding.spec.ts
+@@ -0,0 +1,15 @@
++import { describe, expect, it } from 'vitest'
++import { desktopBrandText, LEGACY_USER_DATA_DIRECTORY } from '../src/branding.ts'
++describe('WhalePod presentation branding', () => {
++  it('keeps existing Electron user data directory', () => {
++    expect(LEGACY_USER_DATA_DIRECTORY).toBe('@deepseek-ai/dsh-desktop')
++  })
++  it('brands desktop windows and localized messages while keeping session names', () => {
++    expect(desktopBrandText('Demo — DSH 本地构建', 'WhalePod')).toBe('Demo — WhalePod')
++    expect(desktopBrandText('Demo — DSH Local Build', 'WhalePod')).toBe('Demo — WhalePod')
++    expect(desktopBrandText('DeepSeek Harness — 桌面插件', 'WhalePod')).toBe('WhalePod — 桌面插件')
++  })
++  it('leaves official and development builds unchanged', () => {
++    expect(desktopBrandText('DeepSeek Harness', 'DeepSeek Harness')).toBe('DeepSeek Harness')
++  })
++})
 diff --git a/apps/desktop/tests/external-links.spec.ts b/apps/desktop/tests/external-links.spec.ts
 new file mode 100644
 index 0000000000..c09b211709
