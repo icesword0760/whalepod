@@ -1,0 +1,12 @@
+# Replace the official root-layout row. The include patch algorithm treats a
+# row's `name` as an identity assertion — a same-id patch that changes `name`
+# is skipped with a warning — so replacement is expressed as: disable the
+# official row (asserting its identity), then insert this plugin as its own
+# row. Removing this bundle patch restores the official ui-layout row supplied
+# by the DSH Web profile; the disabled row keeps its config untouched.
+- id: ui-layout
+  name: '@deepseek-ai/dsh-client-ui-layout'
+  disabled: true
+- insert:
+    - id: matou-layout
+      name: dsh-plugin-matou-layout

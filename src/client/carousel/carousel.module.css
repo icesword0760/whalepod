@@ -1,0 +1,317 @@
+/* Sibling-session carousel (mockup `carousel`/`card`/`compactHeader`, 码头
+   `SessionCarousel.tsx`). Colors/shadows ride DSH alias tokens only — no
+   literal rgb() values — so the carousel matches DSH's own light/dark
+   themes instead of the mockup's frozen light-mode literals. */
+
+.carousel {
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  overflow-x: auto;
+  /* 承重：让本元素成为卡片槽位的 offsetParent。
+     `useCarouselController` 的全部滚动数学（居中、悬停完整可见、边缘浏览、
+     几何持久化）都把 `card.offsetLeft` 当成「卡片在带子内容里的位置」。而
+     `offsetLeft` 实际是相对最近的**定位**祖先算的——本元素若是 static，
+     参照就会跳到外层 `.frame`，于是每个位置都多算了一整条左侧栏的宽度
+     （实测：真实位置 594，读到 874，差 280 = 侧栏宽）。后果是点一张卡它
+     不居中，而是被推到左边、右边空出一大片；侧栏折叠时误差还会跟着变。
+     jsdom 没有布局、测试又用注入式测量替身喂的是「正确值」，所以这条只有
+     真实浏览器能发现——首次活体走查逮到的。改动仅此一行，不影响布局：
+     本元素没有定位后代。 */
+  position: relative;
+  /* Horizontal scroll must not chain into the page/parent (trackpad swipe
+     at either edge would otherwise trigger browser back/forward or scroll
+     the surrounding shell). */
+  overscroll-behavior-x: contain;
+  background: var(--dsw-alias-bg-module-platform);
+  flex: 1;
+  min-height: 0;
+}
+
+/* One column slot: width is driven by --session-visible-columns (written
+   inline by Carousel from `visibleColumnsForWidth`); the flex-basis
+   transition is what makes a focus change glide instead of jump. */
+.slot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 0 0 calc((100% - (var(--session-visible-columns) - 1) * 12px) / var(--session-visible-columns));
+  transition: flex-basis 380ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.slot.isFocused,
+.slot.isExpanded {
+  flex-basis: min(48%, 620px);
+}
+
+/* C1: the filler for a run of virtualized-away cards (码头
+   `.session-card-virtual-spacer`, session-canvas.css:13). One omitted card
+   occupies a slot plus the 12px gap that follows it, so `count` of them span
+   `count * (slot + 12px)`; the spacer's own trailing gap supplies the last
+   12px, hence the `- 12px`. Same `--session-visible-columns` term as `.slot`
+   above, so head/tail fillers stay exactly in step with the real columns and
+   the scroll track keeps the length it would have had with every card
+   mounted. */
+.virtualSpacer {
+  flex: 0 0 calc(
+    var(--virtual-count) *
+    ((100% - (var(--session-visible-columns) - 1) * 12px) / var(--session-visible-columns) + 12px) - 12px
+  );
+  min-width: 0;
+  pointer-events: none;
+}
+
+.card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-panel);
+  transition: box-shadow 220ms ease, transform 220ms ease;
+}
+
+.card.isFocused {
+  box-shadow: var(--dsw-elevation-prominent);
+  transform: translateY(-4px);
+}
+
+/* Notice halo: an accent ring plus a soft glow, layered under the panel
+   shadow so a ringed-and-focused card still reads as elevated. */
+.card.hasRing {
+  box-shadow:
+    inset 0 0 0 2px var(--dsw-alias-state-business-primary),
+    0 0 18px color-mix(in srgb, var(--dsw-alias-state-business-primary) 32%, transparent),
+    var(--dsw-elevation-panel);
+}
+
+.pane {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Ruling-6 (S3b plan ledger, load-bearing): a compact card renders the SAME
+   complete official DSH conversation as the focused card (message stream +
+   input), including DSH's own session header (breadcrumb/mode/tabs — see
+   `ConversationRoot.tsx`/`ConversationSessionHeader`, ui-conversation). Left
+   alone that produces "two heads" once `.compactHeader` below is stacked on
+   top of it. Every `renderSlot(...)` call renders behind a stable
+   `[data-slot="<key>"]` anchor wrapper (`ui-renderer`'s `SlotOutlet` —
+   documented there as the "Anchor contract"), so `[data-slot='conversation.session.header']`
+   is a public, versioned seam — not a CSS-module class name, which is
+   opaque/hashed and never meant to be targeted from outside its own module.
+   Hiding that one wrapper removes DSH's header (breadcrumb + mode + tabs +
+   Task 8's appended card actions) while leaving the transcript and composer
+   untouched. Scoped to `.card:not(.isFocused)` only — the focused card keeps
+   its official header exactly as ui-conversation renders it.
+
+   D1 fix (S3b Task 11c): the anchor wrapper itself is NOT what we hide.
+   `SlotOutlet` stamps that wrapper with an inline `style="display: contents"`
+   (scoped-slots.tsx's `ANCHOR_STYLE`), and an inline style always outranks a
+   stylesheet rule of equal-or-lower specificity — a plain `display: none`
+   here loses to it, so the wrapper (and DSH's header inside it) stayed
+   visible. Rather than fight that with `!important` (which would need to
+   keep winning forever against whatever the anchor's inline style becomes),
+   this targets the anchor's own children instead: the anchor contributes no
+   box of its own (`display: contents`), so hiding everything *inside* it has
+   the identical visual effect and never has to out-rank an inline style. */
+.card:not(.isFocused) .pane :global([data-slot='conversation.session.header']) > * {
+  display: none;
+}
+
+/* 空白卡上的「选择工作区」芯片：在本插件的工作台里必须去掉。
+
+   码头的卡片没有这种控件——一张卡的工作目录由它挂在哪个工作区/事项下决定，
+   卡片自己无从选择（`session-canvas/SessionCard.tsx` 是个纯壳子，连 workspace
+   这个词都不出现）。
+
+   移植到 DSH 后它不只是多余，而是一个陷阱：DSH 的
+   `ConversationRoot.tsx:306` 把这颗芯片的 `onPick` 接到了 `selectWorkspace()`，
+   **会把这个会话整个挪到另一个工作区**；而本插件给卡片定位只看自己的落位记录
+   （哪个事项、哪个页签），`workbench/known-sessions.ts` 里没有工作区这一维。
+   于是用户在卡片里换一下工作区，卡片会**留在原来的事项下**，但它实际干活的目录
+   已经变成了别的工作区——卡片对自己在哪干活撒谎。去掉入口就堵死了这条路。
+
+   只在轮播的卡片里隐藏：没有 Matou 现场时（`AppFrame.tsx` 的 fallback 分支）
+   DSH 自己的会话座位照常渲染，用户仍然能用官方流程选工作区。
+
+   两条规则分别对付一行里的两个元素（`ConversationRoot.tsx:292-315` 的
+   `heroWorkspaceRow`：芯片 + 工作区座位 + Agent 预设座位）：
+   - 座位锚点带着内联 `style="display: contents"`，内联样式永远压过样式表，所以
+     同 `conversation.session.header` 那条先例一样，隐藏的是它的**子节点**；
+   - 芯片是那一行里唯一的直接 `button` 子节点，用 `:has()` 从座位反查到该行。
+   保留同排的「标准模式」（Agent 预设）——那个确实是每张卡自己的选择。 */
+.card .pane :global([data-slot='conversation.hero.workspace']) > * {
+  display: none;
+}
+
+.card .pane :global(:has(> [data-slot='conversation.hero.workspace']) > button) {
+  display: none;
+}
+
+/* Compact card header: the 42px status row a non-focused card shows instead
+   of the official session header (mockup `compactHeader`). */
+.compactHeader {
+  box-sizing: border-box;
+  height: 42px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  box-shadow: inset 0 -0.5px 0 var(--dsw-alias-border-l2);
+}
+
+.compactTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.noticeBadge {
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--dsw-alias-state-business-tertiary);
+  color: var(--dsw-alias-state-business-primary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.childBadge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.moreButton {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+
+button.moreButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.newSessionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  opacity: 0;
+}
+.card:hover .newSessionButton,
+.card:focus-within .newSessionButton,
+.newSessionButton[aria-busy="true"] { opacity: 1; }
+.newSessionButton:hover { background: var(--dsw-alias-bg-module-platform); }
+.newSessionButton:disabled { cursor: wait; opacity: .5; }
+@media (hover: none) { .newSessionButton { opacity: 1; } }
+
+/* Merge DSH's export-only menu into our card menu, but keep its component mounted:
+   the export result dialog and /export command still use that component's state.
+   Both attributes identify the native export trigger (HeaderAction.tsx); do not
+   hide arbitrary utilities, the open-in-app picker, or the modal portal. */
+.card:has([data-matou-download]) .pane :global([data-slot='conversation.session.header.utilities'] button[aria-haspopup='menu'][aria-busy]) {
+  display: none;
+}
+
+/* This standalone expand control immediately re-collapses in the carousel's
+   zero-width right column. Remove only its card-header entry, not the rightbar
+   service, file links, or official-layout behavior when the plugin is off. */
+.card .pane :global([data-conversation-header-corner]) {
+  display: none;
+}
+
+.resizeHandle {
+  position: absolute;
+  right: -6px;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+  border-radius: 8px;
+}
+.resizeHandle:hover, .resizeHandle:focus-visible {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 30%, transparent);
+}
+.carousel[data-layout-gesture] { user-select: none; }
+.carousel[data-layout-gesture='sort'] { cursor: grabbing; }
+.slot[data-sorting] {
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-module-platform);
+}
+.slot[data-sorting] .card { opacity: 0; }
+.slot[data-sorting] .resizeHandle { visibility: hidden; }
+.floatingGhost {
+  position: fixed;
+  z-index: 2147483000;
+  pointer-events: none;
+  display: flex;
+}
+.floatingGhost .card {
+  width: 100%;
+  height: 100%;
+  transform: scale(1.025);
+  transition: transform 180ms cubic-bezier(.2,.8,.2,1);
+  outline: none;
+  --dsw-elevation-stroke-color: transparent;
+  box-shadow: var(--dsw-elevation-prominent), 0 20px 48px color-mix(in srgb, var(--dsw-alias-label-primary) 20%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .floatingGhost .card { transition: none; transform: none; }
+}
+.layoutNotice {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  z-index: 20;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-prominent);
+  pointer-events: none;
+}

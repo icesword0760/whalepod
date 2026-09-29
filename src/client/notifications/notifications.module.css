@@ -1,0 +1,300 @@
+/* S5 Task 7: the notification-center panel (`NotificationCenter.tsx`), its
+   rows (`NotificationItem.tsx`), and the shared `Switch.tsx` primitive — one
+   module shared by the three, matching this file's own scope in the brief
+   (a single `notifications.module.css`, not one per component).
+
+   Geometry is ported verbatim from 码头 hierarchy.css's `.notification-center`
+   family (spec §5): 382px fixed left panel, 49px top inset, 5px bottom
+   inset, 12px radius, 220ms drop-in. Every color/shadow rides a DSH alias
+   token instead of 码头's literal `#212121`/`#dfdfdf`/`#ff684e` (project
+   rule: no hardcoded rgb) — see the module's own comments for which token
+   stands in for which 码头 literal. */
+
+.panel {
+  position: fixed;
+  z-index: 200;
+  top: 49px;
+  bottom: 5px;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 382px;
+  overflow: hidden;
+  border-radius: 12px;
+  color: var(--dsw-alias-label-primary);
+  /* Floating-surface pair, same convention as DSH's own Modal/Menu cards
+     (`dsh-client-ui-primitives`'s Modal.module.css / Menu.module.css):
+     layer-2 fill sitting above the app's layer-1/base ground, elevated with
+     the "prominent" shadow token (a floating overlay, not an inline card —
+     `--dsw-elevation-panel` is for the latter, e.g. `carousel.module.css`). */
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-elevation-prominent);
+  animation: panelDropIn 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes panelDropIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.header {
+  display: flex;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.actionBtn,
+.closeBtn {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.actionBtn:hover,
+.closeBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.empty {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.emptyText {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.group {
+  padding: 8px 16px 16px;
+}
+
+.items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.footer {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.soundToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.soundLabel {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+/* NotificationItem: a nested card on the panel surface (layer-3, one step
+   lighter than the panel's own layer-2 — same "card on a surface" pairing
+   as ui-settings-plugins' PluginCard.module.css). */
+.item {
+  position: relative;
+  padding: 8px 32px 8px 12px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-3);
+  transition: background 160ms ease;
+}
+
+.item:hover {
+  /* 码头 hierarchy.css:464 lifts the row on hover (`rgba(255,255,255,.06)`
+     over its own `.04`); the DSH token for exactly that "a surface responds
+     to the pointer" step is the interactive hover fill every other hoverable
+     row in this plugin already uses. */
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* S5 Task 8: the row body is a real <button> (码头's own
+   `.notification-item__body` is too), so it carries that element's reset —
+   the same set 码头 spells out at hierarchy.css:465 (full width, no padding,
+   no border, inherited color, transparent ground, left-aligned text). */
+.itemBody {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.breadcrumbPart {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breadcrumbSep {
+  flex: 0 0 auto;
+  opacity: 0.5;
+}
+
+.itemTitle {
+  display: block;
+  margin: 4px 0 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.itemSubtitle {
+  display: block;
+  margin: 4px 0 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.itemContent {
+  display: -webkit-box;
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.itemTime {
+  display: block;
+  margin-top: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.itemDismiss {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.itemDismiss:hover,
+.itemDismiss:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Switch (`Switch.tsx`): same shape/tokens as
+   ui-settings-plugins/SubagentModelSelectionCard.module.css's own hand-rolled
+   switch — the DSH-hosted precedent the brief points to, reused verbatim
+   rather than 码头's literal `#30363d`/`#ff684e` track colors. */
+.switch {
+  box-sizing: border-box;
+  position: relative;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 18px;
+  padding: 2px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--dsw-alias-border-l3);
+  cursor: pointer;
+}
+
+.switchOn {
+  background: var(--dsw-alias-brand-primary);
+}
+
+.switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.switchThumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-primary-foreground);
+  transition: transform 120ms ease;
+}
+
+.switchOn .switchThumb {
+  transform: translateX(14px);
+}

@@ -1,0 +1,37 @@
+/* Carousel drill-layer breadcrumb (mockup `breadcrumb`). Colors ride DSH
+   alias tokens only, matching carousel.module.css's convention. */
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 12px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  flex: 0 0 auto;
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.back:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.label {
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}

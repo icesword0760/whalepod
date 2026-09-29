@@ -1,0 +1,70 @@
+/* S5 Task 6: the sidebar-footer bell. Values mirror DSH's own sidebar-foot
+   rows — ui-settings-general's `.trigger` (SettingsRoot.module.css) and
+   ui-cordis's `.badge` (CordisPanel.module.css) both use this exact
+   42px/12px-radius wide row and 36px/50%-radius rail circle — so the bell
+   sits flush with its neighbors instead of introducing a one-off size. */
+
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% + 4px);
+  height: 42px;
+  margin: 0 -2px;
+  padding: 0 10px 0 8px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.trigger:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Rail trigger: the same 36x36 circle box as the other rail controls. */
+.trigger.rail {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.iconWrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+/* Boolean presence dot (unreadCount > 0), never a number — 码头
+   `TaskSidebar.tsx:196-197` draws the same bare dot, not a count. The red
+   comes from the shared error token so it tracks DSH's light/dark palette
+   (never a literal rgb), matching this plugin's own `.tabUnreadDot`
+   (workbench.module.css). */
+.dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-error-primary);
+}
+
+.label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.headerBell { display: inline-flex; flex: none; }
+.headerBell .trigger.rail { width: 28px; height: 28px; border-radius: 8px; }

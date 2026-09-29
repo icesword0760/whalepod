@@ -1,0 +1,2539 @@
+diff --git a/apps/desktop-host/package.json b/apps/desktop-host/package.json
+index 83b1ed2a5b..b8215a89a2 100644
+--- a/apps/desktop-host/package.json
++++ b/apps/desktop-host/package.json
+@@ -23,6 +23,7 @@
+     "@deepseek-ai/dsh-host-directory-picker-native": "workspace:^",
+     "@deepseek-ai/dsh-host-webserver": "workspace:^",
+     "@deepseek-ai/dsh-launch-environment": "workspace:^",
+-    "@deepseek-ai/dsh-web-frontend": "workspace:^"
++    "@deepseek-ai/dsh-web-frontend": "workspace:^",
++    "@deepseek-ai/dsh-http-proxy": "workspace:^"
+   }
+ }
+diff --git a/apps/desktop-host/src/index.ts b/apps/desktop-host/src/index.ts
+index 3abebfc3c6..aa861e1c3b 100644
+--- a/apps/desktop-host/src/index.ts
++++ b/apps/desktop-host/src/index.ts
+@@ -4,6 +4,7 @@
+  * @module @deepseek-ai/dsh-desktop-host
+  */
+ 
++import { installProxyFromEnvironment } from '@deepseek-ai/dsh-http-proxy'
+ import { createRequire } from 'node:module'
+ import { closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+ import { once } from 'node:events'
+@@ -287,22 +288,20 @@ export async function runDesktopHost(
+   const rootConfig = join(absoluteProject, ROOT_CONFIG_FILENAME)
+   writeFileSync(rootConfig, ROOT_CONFIG)
+   const environment = loadLayeredEnv('dsh desktop')
++  const patches = structuredClone(desktopPatches(resolve(runtimeDir), absoluteProject, options.allowLinkedPackages === true))
++  const disposeProxy = await installProxyFromEnvironment(environment, message => { process.stderr.write('dsh desktop: ' + message + '\n') })
+   let current: Context | undefined
+-  const ctx = await boot('dsh desktop', rootConfig, structuredClone(desktopPatches(
+-    resolve(runtimeDir),
+-    absoluteProject,
+-    options.allowLinkedPackages === true,
+-  )), (hostCtx) => {
++  const ctx = await boot('dsh desktop', rootConfig, patches, (hostCtx) => {
+     current = hostCtx
+     hostCtx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, environment)
+     provideCmdline(hostCtx, { args: [], exit: () => {} })
+-  })
++  }).catch(async (error: unknown) => { await disposeProxy(); throw error })
+   current = ctx
+   const connection = ctx.get('connection')
+   const clientModules = ctx.get('clientModules')
+   const gateway = ctx.get('typertGateway')
+   if (connection === undefined || clientModules === undefined || gateway === undefined) {
+-    await ctx.fiber.dispose()
++    try { await ctx.fiber.dispose() } finally { await disposeProxy() }
+     throw new Error('dsh desktop: composition did not provide connection, typertGateway, and clientModules')
+   }
+   const api = connection.createSharedFetchHandler('/api')
+@@ -315,8 +314,7 @@ export async function runDesktopHost(
+     disposing ??= (async () => {
+       for (const controller of requests.values()) controller.abort()
+       requests.clear()
+-      await current?.fiber.dispose()
+-      current = undefined
++      try { await current?.fiber.dispose() } finally { current = undefined; await disposeProxy() }
+     })()
+     await disposing
+   }
+diff --git a/apps/desktop-host/tsconfig.json b/apps/desktop-host/tsconfig.json
+index 192f76b926..ac5609157d 100644
+--- a/apps/desktop-host/tsconfig.json
++++ b/apps/desktop-host/tsconfig.json
+@@ -4,16 +4,39 @@
+     "rootDir": "src",
+     "outDir": "lib/types"
+   },
+-  "include": ["src"],
++  "include": [
++    "src"
++  ],
+   "references": [
+-    { "path": "../../vendor/cordis" },
+-    { "path": "../../vendor/include" },
+-    { "path": "../../packages/api/gateway/tsconfig.host.json" },
+-    { "path": "../../packages/boot/app-boot" },
+-    { "path": "../../packages/boot/cmdline" },
+-    { "path": "../../packages/client/connection/tsconfig.host.json" },
+-    { "path": "../../packages/client/modules" },
+-    { "path": "../../packages/host/webserver" },
+-    { "path": "../../packages/util/launch-environment" }
++    {
++      "path": "../../vendor/cordis"
++    },
++    {
++      "path": "../../vendor/include"
++    },
++    {
++      "path": "../../packages/api/gateway/tsconfig.host.json"
++    },
++    {
++      "path": "../../packages/boot/app-boot"
++    },
++    {
++      "path": "../../packages/boot/cmdline"
++    },
++    {
++      "path": "../../packages/client/connection/tsconfig.host.json"
++    },
++    {
++      "path": "../../packages/client/modules"
++    },
++    {
++      "path": "../../packages/host/webserver"
++    },
++    {
++      "path": "../../packages/util/launch-environment"
++    },
++    {
++      "path": "../../packages/util/http-proxy"
++    }
+   ]
+ }
+diff --git a/apps/desktop/README.i18n.yaml b/apps/desktop/README.i18n.yaml
+index b7ab466b8d..9c3791758f 100644
+--- a/apps/desktop/README.i18n.yaml
++++ b/apps/desktop/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write apps/desktop/README.md
+-README.md: c053e4894714d10cba2a9d9c1ebed71b53457c37
+-README.zh.md: e27554fe8a91ee8a918380ef5a860b0838351aa5
++README.md: 69f0ade99ebbdc495185cc3ff012e6bd7eefa853
++README.zh.md: 92e099258f425a22d7a19758e6dbeeaf27997421
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index c053e48947..69f0ade99e 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -4,6 +4,8 @@ English | [中文](README.zh.md)
+ 
+ The desktop application is an Electron shell around the dsh Web UI. It opens no listening port: a bundled upstream Node.js child boots the installed dsh project, versioned framed byte pipes carry Fetch requests and streaming responses without an outer Base64 envelope, Node IPC carries lifecycle control, and `dsh-app://` serves the matching client assets.
+ 
++The native Edit menu supplies standard undo, redo, cut, copy, paste, and select-all shortcuts for editable fields, including API-key inputs.
++
+ ## Key technical decisions
+ 
+ | Decision | Why | Direct consequence |
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index e27554fe8a..92e099258f 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -4,6 +4,8 @@
+ 
+ 桌面应用是包裹 dsh Web UI 的 Electron 壳。它不打开监听端口：内置的上游 Node.js 子进程启动已安装的 dsh 项目，带版本的分帧字节管道在没有外层 Base64 信封的情况下承载 Fetch 请求与流式响应，Node IPC 承载生命周期控制，`dsh-app://` 则提供与后端版本匹配的客户端资源。
+ 
++原生“编辑”菜单为可编辑输入框（包括 API 密钥输入框）提供标准的撤销、重做、剪切、复制、粘贴和全选快捷键。
++
+ ## 关键技术决策
+ 
+ | 决策 | 原因 | 直接结果 |
+diff --git a/apps/desktop/electron-builder.config.mjs b/apps/desktop/electron-builder.config.mjs
+index 4dfb363693..d2fbd677fc 100644
+--- a/apps/desktop/electron-builder.config.mjs
++++ b/apps/desktop/electron-builder.config.mjs
+@@ -34,11 +34,18 @@ export function createElectronBuilderConfig(
+     throw new Error('desktop package: DSH_DESKTOP_UNSIGNED must be 0 or 1')
+   }
+   const unsigned = env.DSH_DESKTOP_UNSIGNED === '1'
+-  if (unsigned && resolvedPlatform !== 'win32') throw new Error('desktop package: unsigned builds require Windows')
++  // 本地开发构建：macOS 走临时签名。只有显式设了 DSH_DESKTOP_LOCAL_ADHOC=1 才启用，
++  // 官方发布路径（不设这个变量）与上游逐字相同。产物只能在本机运行，不能分发、不能自动更新。
++  const localAdhoc = env.DSH_DESKTOP_LOCAL_ADHOC === '1'
++  if (unsigned && resolvedPlatform !== 'win32' && !localAdhoc) {
++    throw new Error('desktop package: unsigned builds require Windows')
++  }
+   const packagesMacOS = targetPlatform === 'darwin' || (targetPlatform === undefined && hostPlatform === 'darwin')
+   const packagesWindows = targetPlatform === 'win32'
+-  const macOSSigning = packagesMacOS ? resolveMacOSSigningEnvironment(env) : undefined
+-  if (packagesMacOS) resolveMacOSNotarizationEnvironment(env)
++  const macOSSigning = packagesMacOS
++    ? (localAdhoc ? { signingIdentity: '-', teamId: 'LOCALADHOC' } : resolveMacOSSigningEnvironment(env))
++    : undefined
++  if (packagesMacOS && !localAdhoc) resolveMacOSNotarizationEnvironment(env)
+   const windowsSigner = packagesWindows && !unsigned
+     ? createWindowsTokenSigner({
+         certificateFile: env.DSH_DESKTOP_WINDOWS_CER_FILE,
+@@ -71,13 +78,16 @@ export function createElectronBuilderConfig(
+       { from: join(buildPaths.dsh, 'node_modules'), to: 'dsh/node_modules' },
+     ],
+     mac: {
++      // Local Matou build only; official distribution keeps its own branding.
++      ...(localAdhoc ? { icon: fileURLToPath(new URL('./assets/matou/AppIcon.icns', import.meta.url)) } : {}),
+       category: 'public.app-category.developer-tools',
+       identity: macOSSigning?.signingIdentity,
+-      forceCodeSigning: true,
+-      hardenedRuntime: true,
++      forceCodeSigning: !localAdhoc,
++      // 临时签名不能开 hardened runtime（那要求可信时间戳与真实证书）。
++      hardenedRuntime: !localAdhoc,
+       // Native runtime files are pre-signed; PAK resources are sealed by their enclosing bundle.
+       signIgnore: ['/Contents/Resources/dsh(?:/|$)', '\\.pak$'],
+-      notarize: true,
++      notarize: !localAdhoc,
+       target: ['dmg', 'zip'],
+     },
+     dmg: {
+diff --git a/apps/desktop/scripts/prepare-dsh.ts b/apps/desktop/scripts/prepare-dsh.ts
+index d3f9dae8a3..ddc9cfbc85 100644
+--- a/apps/desktop/scripts/prepare-dsh.ts
++++ b/apps/desktop/scripts/prepare-dsh.ts
+@@ -134,7 +134,12 @@ async function main(): Promise<void> {
+       }
+     }
+     if (process.platform === 'darwin') {
+-      await signMacOSRuntime(DSH_OUTPUT_ROOT, resolveDesktopAppId(process.env), resolveMacOSSigningEnvironment(process.env))
++      // 本地开发构建（DSH_DESKTOP_LOCAL_ADHOC=1）用 macOS 的临时签名，不需要证书；
++      // 不设这个变量时走上游原路径，要求真实的 Developer ID 与 Team ID。
++      const signing = process.env['DSH_DESKTOP_LOCAL_ADHOC'] === '1'
++        ? { signingIdentity: '-', teamId: 'LOCALADHOC' }
++        : resolveMacOSSigningEnvironment(process.env)
++      await signMacOSRuntime(DSH_OUTPUT_ROOT, resolveDesktopAppId(process.env), signing)
+     }
+     writeDesktopRuntime(DSH_OUTPUT_ROOT, release, packageSet.packages.map(entry => entry.name), target)
+     const descriptor = await verifyDesktopRuntime(DSH_OUTPUT_ROOT, release.version, target)
+diff --git a/apps/desktop/scripts/verify-macos-signature.mjs b/apps/desktop/scripts/verify-macos-signature.mjs
+index 13d881f2fc..2d5e3ab6e4 100644
+--- a/apps/desktop/scripts/verify-macos-signature.mjs
++++ b/apps/desktop/scripts/verify-macos-signature.mjs
+@@ -11,6 +11,13 @@ import { resolveMacOSSigningEnvironment } from './desktop-release-environment.mj
+  * @returns {void}
+  */
+ export function assertMacOSSignatureDetails(details, expected) {
++  // 临时签名（本地开发构建）没有签发机构、也没有 Team ID，只核对它确实被临时签过。
++  if (expected.signingIdentity === '-') {
++    if (!/\bSignature=adhoc\b/u.test(details)) {
++      throw new Error('desktop macOS signing: local ad-hoc build is not ad-hoc signed')
++    }
++    return
++  }
+   const fields = new Set(details.split(/\r?\n/u).map(line => line.trim()))
+   const expectedAuthority = `Authority=Developer ID Application: ${expected.signingIdentity}`
+   const expectedTeam = `TeamIdentifier=${expected.teamId}`
+@@ -28,6 +35,8 @@ export function assertMacOSSignatureDetails(details, expected) {
+  */
+ export function assertMacOSRuntimeSignatureDetails(details, expected) {
+   assertMacOSSignatureDetails(details, expected)
++  // 临时签名拿不到可信时间戳、也开不了 hardened runtime，这两项对本地构建不适用。
++  if (expected.signingIdentity === '-') return
+   const fields = details.split(/\r?\n/u).map(line => line.trim())
+   if (!fields.some(line => /^Timestamp=.+/u.test(line))) {
+     throw new Error('desktop macOS signing: runtime signature has no secure timestamp')
+@@ -113,12 +122,15 @@ function runCodeSign(args) {
+  * @returns {Promise<void>} Resolves after codesign exits successfully.
+  */
+ export async function signMacOSRuntimeCode(path, identifier, expected) {
++  // 本地开发构建（DSH_DESKTOP_LOCAL_ADHOC=1，签名标识为 '-'）走 macOS 的临时签名：
++  // 它既拿不到可信时间戳，也不能开 hardened runtime，两个参数都会让 codesign 失败。
++  // 官方发布路径不设这个开关，行为与上游逐字相同。
++  const adhoc = expected.signingIdentity === '-'
+   await runAppleCommandAsync('/usr/bin/codesign', [
+     '--force',
+     '--sign', expected.signingIdentity,
+     '--identifier', identifier,
+-    '--timestamp',
+-    '--options', 'runtime',
++    ...(adhoc ? [] : ['--timestamp', '--options', 'runtime']),
+     path,
+   ], 'codesign')
+ }
+diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
+index 6883c978ac..ddde7564b5 100644
+--- a/apps/desktop/src/ipc.ts
++++ b/apps/desktop/src/ipc.ts
+@@ -6,6 +6,7 @@ import type { DesktopBackendState } from './backend-controller.ts'
+ 
+ /** IPC channel names kept private to the desktop application bundle. */
+ export const DESKTOP_IPC = {
++  applicationMenu: 'dsh-desktop:application-menu',
+   localeGet: 'dsh-desktop:locale-get',
+   pluginsList: 'dsh-desktop:plugins-list',
+   pluginsAdd: 'dsh-desktop:plugins-add',
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index a73a6223a5..f53c003786 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -10,10 +10,13 @@ import {
+   ipcMain,
+   Menu,
+   protocol,
++  shell,
+   type IpcMainInvokeEvent,
+ } from 'electron'
++import { externalWebsite } from './external-links.ts'
+ import { resolveDesktopPaths } from './paths.ts'
+ import { DesktopProjectManager, type DesktopProjectHooks } from './project-manager.ts'
++import { desktopHostEnvironment } from './system-proxy.ts'
+ import { DesktopHostProcess } from './host-process.ts'
+ import { DesktopBackendController, type DesktopBackendState } from './backend-controller.ts'
+ import { DESKTOP_IPC, type DesktopUpdateState } from './ipc.ts'
+@@ -27,6 +30,7 @@ const SCHEME = 'dsh-app'
+ let focusPrimaryWindow = (): void => {}
+ type RecoveryAction = 'restart' | 'plugins' | 'reset'
+ let profileRecoveryAvailable = (): boolean => false
++const integratedWindows = new WeakSet<BrowserWindow>()
+ const emergencyPages = new WeakMap<BrowserWindow, { url: string; message: string; busy: boolean }>()
+ let recoverApplication = (action: RecoveryAction): Promise<void> => {
+   if (action !== 'restart') return Promise.reject(new Error('Desktop recovery could not initialize; reinstall the application'))
+@@ -87,24 +91,37 @@ function developmentHostInspectPort(enabled: boolean): number | undefined {
+   return port
+ }
+ 
+-function createWindow(preload: string, show = false): BrowserWindow {
++function createWindow(preload: string, show = false, integratedChrome = false): BrowserWindow {
+   const window = new BrowserWindow({
+     width: 1280,
+     height: 840,
+     minWidth: 880,
+     minHeight: 600,
+     show,
++    ...(integratedChrome ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 14 } } : {}),
+     webPreferences: {
+       preload,
++      additionalArguments: integratedChrome ? ['--matou-integrated-chrome'] : [],
+       nodeIntegration: false,
+       contextIsolation: true,
+       sandbox: true,
+       webSecurity: true,
+     },
+   })
+-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
++  if (integratedChrome) integratedWindows.add(window)
++  const openWebsite = (value: string): void => {
++    const url = externalWebsite(value)
++    if (url === undefined) return
++    void shell.openExternal(url).catch(async () => {
++      if (!window.isDestroyed()) await dialog.showMessageBox(window, { type: 'error', message: '浏览器打开失败，请重试。', detail: url })
++    })
++  }
++  window.webContents.setWindowOpenHandler(({ url }) => {
++    openWebsite(url)
++    return { action: 'deny' }
++  })
+   window.webContents.on('will-navigate', (event, url) => {
+-    if (new URL(url).protocol !== `${SCHEME}:`) event.preventDefault()
++    if (new URL(url).protocol !== `${SCHEME}:`) { event.preventDefault(); openWebsite(url) }
+     const page = emergencyPages.get(window)
+     if (page === undefined || page.busy || window.webContents.getURL() !== page.url) return
+     const action = new URL(url)
+@@ -148,6 +165,7 @@ async function serveShellAsset(request: Request): Promise<Response> {
+ }
+ 
+ async function main(): Promise<void> {
++  const hostEnvironment = await desktopHostEnvironment(process.env)
+   const resources = runtimeResources()
+   const paths = resolveDesktopPaths()
+   const development = app.isPackaged ? undefined : join(app.getAppPath(), '.desktop-build', 'development', 'project')
+@@ -170,6 +188,12 @@ async function main(): Promise<void> {
+   let navigation: { window: BrowserWindow; url: string; promise: Promise<void> } | undefined
+   let emergencyDocument = false
+ 
++  /** Only the enabled layout plugin on macOS replaces the native title strip. */
++  const wantsIntegratedChrome = (): boolean => {
++    try { return process.platform === 'darwin' && manager.listPlugins().some(plugin => plugin.name === 'dsh-plugin-matou-layout' && plugin.enabled) } catch { return false }
++  }
++
++
+   const showEmergencyError = async (error: unknown): Promise<void> => {
+     if (quitting || emergencyDocument) return
+     emergencyDocument = true
+@@ -204,7 +228,7 @@ async function main(): Promise<void> {
+     if (development === undefined) manager.assertProfileRuntime(activeProject)
+     const hostInspectPort = developmentHostInspectPort(development !== undefined)
+     const host = new DesktopHostProcess(resources.node, development ?? resources.dsh, activeProject,
+-      hostInspectPort, process.env, onFailure)
++      hostInspectPort, hostEnvironment, onFailure)
+     return {
+       start: () => host.start(),
+       stop: () => host.stop(),
+@@ -305,12 +329,28 @@ async function main(): Promise<void> {
+     await navigateMain(startupUrl)
+     try {
+       await manager.mutate(mutation, hooks)
++      // Electron titleBarStyle is construction-only. Recreate only the window
++      // after a plugin toggle; the host and all persisted sessions remain owned.
++      if (mainWindow && integratedWindows.has(mainWindow) !== wantsIntegratedChrome()) {
++        const previous = mainWindow
++        const bounds = previous.getBounds()
++        const maximized = previous.isMaximized()
++        const replacement = createMainWindow()
++        replacement.setBounds(bounds)
++        if (maximized) replacement.maximize()
++        previous.close()
++      }
+       await navigateMain(applicationUrl)
+     } catch (error) {
+       await showStartupError(error)
+       throw error
+     }
+   }
++  ipcMain.handle(DESKTOP_IPC.applicationMenu, (event) => {
++    assertDesktopSender(event, ['app'])
++    if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('dsh desktop: menu requires the main window')
++    Menu.getApplicationMenu()?.popup({ window: mainWindow })
++  })
+   ipcMain.handle(DESKTOP_IPC.localeGet, (event) => {
+     assertDesktopSender(event, ['shell'])
+     return locale
+@@ -434,6 +474,7 @@ async function main(): Promise<void> {
+     void pluginWindow.loadURL(`${SCHEME}://shell/plugin-manager.html`)
+   }
+ 
++  // Native editing roles supply clipboard and selection shortcuts in every window.
+   Menu.setApplicationMenu(Menu.buildFromTemplate([{
+     label: process.platform === 'darwin' ? app.name : messages.application,
+     submenu: [
+@@ -447,10 +488,10 @@ async function main(): Promise<void> {
+       { type: 'separator' },
+       { role: 'quit' },
+     ],
+-  }]))
++  }, { role: 'editMenu' }]))
+ 
+   const createMainWindow = (): BrowserWindow => {
+-    const window = createWindow(appPreload, true)
++    const window = createWindow(appPreload, true, wantsIntegratedChrome())
+     mainWindow = window
+     window.on('closed', () => { if (mainWindow === window) mainWindow = undefined })
+     window.webContents.on('preload-error', (_event, _path, error) => {
+diff --git a/apps/desktop/src/preload-app.ts b/apps/desktop/src/preload-app.ts
+index c05b749a05..bfadf68bf2 100644
+--- a/apps/desktop/src/preload-app.ts
++++ b/apps/desktop/src/preload-app.ts
+@@ -1,6 +1,6 @@
+ /** Startup controls for shell documents; application documents receive only the carrier marker. */
+ 
+-import { contextBridge, ipcRenderer } from 'electron'
++import { contextBridge, ipcRenderer, webUtils } from 'electron'
+ import { DESKTOP_IPC, type DshDesktopStartupApi } from './ipc.ts'
+ import type { DesktopBackendState } from './backend-controller.ts'
+ 
+@@ -21,4 +21,11 @@ const startup: DshDesktopStartupApi = {
+ }
+ 
+ contextBridge.exposeInMainWorld('dshDesktop', location.protocol === 'dsh-app:' && location.hostname === 'shell'
+-  ? startup : { protocolVersion: 1 })
++  ? startup : {
++    protocolVersion: 1,
++    ...(location.protocol === 'dsh-app:' && location.hostname === 'app' && process.argv.includes('--matou-integrated-chrome') ? {
++      integratedTitlebar: true,
++      getPathForFile: (file: File) => webUtils.getPathForFile(file),
++      showAppMenu: () => ipcRenderer.invoke(DESKTOP_IPC.applicationMenu) as Promise<void>,
++    } : {}),
++  })
+diff --git a/apps/desktop/src/profile-packages.ts b/apps/desktop/src/profile-packages.ts
+index 1cb907ffa7..7bba606992 100644
+--- a/apps/desktop/src/profile-packages.ts
++++ b/apps/desktop/src/profile-packages.ts
+@@ -232,7 +232,10 @@ export function validateDesktopPluginGraph(
+   }
+   for (const name of activePlugins) {
+     const path = packageFrom(profile, name)
+-    if (path === undefined || !inside(profileRoot, path)) throw new Error(`desktop profile: missing local plugin ${name}`)
++    // Release-owned plugins may resolve to the exact verified shared package.
++    if (path === undefined || (!inside(profileRoot, path) && shared.get(name) !== path)) {
++      throw new Error(`desktop profile: missing local plugin ${name}`)
++    }
+     visit(path, name)
+   }
+ }
+diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
+index a91c6af6b2..c625ac5c1b 100644
+--- a/apps/desktop/src/project-manager.ts
++++ b/apps/desktop/src/project-manager.ts
+@@ -253,7 +253,7 @@ export class DesktopProjectManager {
+         if (entry.isDirectory()) removeOwnedDirectory(path)
+         else unlinkSync(path)
+       }
+-      createPluginProfile(this.paths.profile)
++      this.createBundledProfile()
+       this.prepareProfile(this.paths.profile)
+       await hooks.afterChange()
+     })
+@@ -296,6 +296,19 @@ export class DesktopProjectManager {
+     return readDesktopRuntime(this.runtime.dsh)
+   }
+ 
++  /** Seed only fresh/reset profiles when this distribution includes the layout. */
++  private createBundledProfile(): void {
++    createPluginProfile(this.paths.profile)
++    const bundled = this.currentRuntime().sharedPackages.find(entry => entry.name === 'dsh-plugin-matou-layout')
++    if (bundled === undefined) return
++    const manifest = projectManifest(this.paths.profile)
++    writeJson(join(this.paths.profile, 'package.json'), {
++      ...manifest,
++      dependencies: { ...manifest.dependencies, [bundled.name]: bundled.version },
++      dsh: { profile: { bundles: [...DESKTOP_PROFILE_BUNDLES, bundled.name] } },
++    })
++  }
++
+   private prepareProfile(projectDir: string): void {
+     const runtime = this.currentRuntime()
+     linkDesktopHostPackages(projectDir, this.runtime.dsh, runtime)
+@@ -316,7 +329,7 @@ export class DesktopProjectManager {
+           && realpathSync.native(link.target) === realpathSync.native(join(this.runtime.dsh, 'node_modules', link.name)))) {
+         return false
+       }
+-      if (previous === undefined) createPluginProfile(this.paths.profile)
++      if (previous === undefined) this.createBundledProfile()
+       await this.reconcileProfile(this.paths.profile, previous)
+       return true
+     })
+diff --git a/apps/desktop/tests/fixtures/runtime-payload-smoke.mjs b/apps/desktop/tests/fixtures/runtime-payload-smoke.mjs
+index da2d5c478d..f2f356c988 100644
+--- a/apps/desktop/tests/fixtures/runtime-payload-smoke.mjs
++++ b/apps/desktop/tests/fixtures/runtime-payload-smoke.mjs
+@@ -64,9 +64,26 @@ async function checkPty() {
+   }
+ }
+ 
+-/** fs-ext implements seek on Windows through SetFilePointerEx and on POSIX through lseek. */
++/**
++ * fs-ext implements seek on Windows through SetFilePointerEx and on POSIX through lseek.
++ *
++ * Skipped when the payload does not carry it. As of 0.1.5 the session write lock's POSIX
++ * face is `@deepseek-ai/node-addon-system` rather than fs-ext — see
++ * `.agents/notes/implemented/architecture/2026-09-07-prebuilt-system-primitives.md`, whose
++ * stated reason for the swap is that fs-ext compiled a NAN addon during consumer
++ * installation. No source file in this repository imports or requires `fs-ext` any more,
++ * and no package.json declares it, so a payload assembled from a source build cannot
++ * contain it. Requiring it unconditionally made `pnpm run package:mac:*` fail for anyone
++ * building from source, with `Cannot find module 'fs-ext'` raised from this fixture.
++ */
+ function checkFsExt() {
+-  const fsExt = requireRuntime('fs-ext')
++  let fsExt
++  try {
++    fsExt = requireRuntime('fs-ext')
++  } catch (error) {
++    if (error?.code !== 'MODULE_NOT_FOUND') throw error
++    return
++  }
+   const file = join(scratch, 'seek.txt')
+   writeFileSync(file, 'abcdef', { flag: 'wx', mode: 0o600 })
+   const fd = openSync(file, 'r')
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index 2b2e47d66d..a81fce20ef 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -1,3 +1,4 @@
++import { Menu, shell } from 'electron'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { join } from 'node:path'
+ import { DESKTOP_IPC } from '../src/ipc.ts'
+@@ -37,6 +38,10 @@ const harness = await vi.hoisted(async () => {
+     constructor(readonly options: { show: boolean }) { super(); windows.push(this) }
+     isDestroyed() { return this.destroyed }
+     isMinimized() { return false }
++    isMaximized() { return false }
++    getBounds() { return { x: 20, y: 30, width: 1280, height: 840 } }
++    readonly setBounds = vi.fn()
++    readonly maximize = vi.fn()
+     async loadURL(url: string) {
+       this.urls.push(url)
+       if (url === 'dsh-app://app/index.html') navigated.resolve()
+@@ -95,13 +100,14 @@ const harness = await vi.hoisted(async () => {
+ })
+ 
+ vi.mock('electron', () => ({
++  shell: { openExternal: vi.fn().mockResolvedValue(undefined) },
+   app: harness.app,
+   BrowserWindow: harness.FakeWindow,
+   dialog: harness.dialog,
+   ipcMain: {
+     handle: (channel: string, handler: (event: { senderFrame: { url: string } }) => unknown) => { harness.handlers.set(channel, handler) },
+   },
+-  Menu: { setApplicationMenu: vi.fn(), buildFromTemplate: vi.fn() },
++  Menu: { setApplicationMenu: vi.fn(), buildFromTemplate: vi.fn(), getApplicationMenu: vi.fn() },
+   protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },
+ }))
+ vi.mock('../src/paths.ts', () => ({ resolveDesktopPaths: () => ({ profile: 'desktop-test-profile' }) }))
+@@ -109,6 +115,7 @@ vi.mock('../src/project-manager.ts', () => ({
+   DesktopProjectManager: class {
+     readonly applyRelease = harness.applyRelease
+     readonly assertProfileRuntime = harness.assertProfileRuntime
++    listPlugins() { return [{ name: 'dsh-plugin-matou-layout', enabled: harness.pluginsEnabled }] }
+     canRecoverProfile = harness.canRecoverProfile
+     async mutate(_mutation: unknown, hooks: { beforeChange(): Promise<void>; afterChange(): Promise<void> }) {
+       await hooks.beforeChange()
+@@ -155,6 +162,46 @@ afterEach(async () => {
+ })
+ 
+ describe('desktop main startup', () => {
++  it('opens web links in the system browser while blocking app and file schemes', async () => {
++    await import('../src/main.ts')
++    await harness.preparing.promise
++    const window = harness.windows[0]!
++    const handler = window.webContents.setWindowOpenHandler.mock.calls[0]![0] as unknown as (input: { url: string }) => { action: string }
++    expect(handler({ url: 'https://skills.sh/' })).toEqual({ action: 'deny' })
++    expect(shell.openExternal).toHaveBeenCalledWith('https://skills.sh/')
++    vi.mocked(shell.openExternal).mockClear()
++    handler({ url: 'file:///tmp/private' })
++    expect(shell.openExternal).not.toHaveBeenCalled()
++    const event = { preventDefault: vi.fn() }
++    window.webContents.emit('will-navigate', event, 'https://github.com/')
++    expect(event.preventDefault).toHaveBeenCalled()
++    expect(shell.openExternal).toHaveBeenCalledWith('https://github.com/')
++  })
++
++  it.each([false, true])('integrates native chrome only when the layout is enabled: %s', async enabled => {
++    harness.pluginsEnabled = enabled
++    vi.stubGlobal('process', { ...process, platform: 'darwin' })
++    await import('../src/main.ts')
++    await harness.preparing.promise
++    const options = harness.windows[0]!.options as Record<string, unknown>
++    expect(options.titleBarStyle).toBe(enabled ? 'hiddenInset' : undefined)
++    expect(options.webPreferences).toMatchObject({ additionalArguments: enabled ? ['--matou-integrated-chrome'] : [] })
++  })
++  it('rejects the application menu bridge from shell documents', async () => {
++    await import('../src/main.ts')
++    await harness.preparing.promise
++    expect(() => invoke(DESKTOP_IPC.applicationMenu)).toThrow('unowned renderer')
++  })
++
++  it('registers native editing commands alongside the application menu', async () => {
++    await import('../src/main.ts')
++    await harness.preparing.promise
++    expect(Menu.buildFromTemplate).toHaveBeenCalledWith(expect.arrayContaining([{ role: 'editMenu' }]))
++    const template = vi.mocked(Menu.buildFromTemplate).mock.calls.at(-1)![0]
++    expect(template).toHaveLength(2)
++    expect(template[0]?.submenu).toEqual(expect.arrayContaining([{ role: 'quit' }]))
++  })
++
+   it('exits with a diagnostic when both initialization and emergency navigation fail', async () => {
+     const exited = Promise.withResolvers<undefined>()
+     vi.spyOn(harness.app, 'getLocale').mockImplementationOnce(() => { throw new Error('locale unavailable') })
+@@ -245,7 +292,7 @@ describe('desktop main startup', () => {
+     expect(harness.dialog.showErrorBox).not.toHaveBeenCalled()
+   })
+ 
+-  it('offers plugin recovery and disables plugins before restarting in the same window', async () => {
++  it('offers plugin recovery and restores native chrome when the layout is disabled', async () => {
+     harness.pluginsEnabled = true
+     await import('../src/main.ts')
+     await harness.preparing.promise
+@@ -261,7 +308,8 @@ describe('desktop main startup', () => {
+     expect(harness.pluginsEnabled).toBe(false)
+     harness.hosts[1]!.ready.resolve()
+     await recovery
+-    expect(harness.windows).toHaveLength(1)
++    expect(harness.windows).toHaveLength(process.platform === 'darwin' ? 2 : 1)
++    if (process.platform === 'darwin') expect(harness.windows[1]!.setBounds).toHaveBeenCalledWith({ x: 20, y: 30, width: 1280, height: 840 })
+     expect(invoke(DESKTOP_IPC.backendStatus)).toEqual({ phase: 'ready' })
+   })
+ 
+diff --git a/apps/desktop/tests/preload-app.spec.ts b/apps/desktop/tests/preload-app.spec.ts
+index 64047c0c0c..4d4136aec0 100644
+--- a/apps/desktop/tests/preload-app.spec.ts
++++ b/apps/desktop/tests/preload-app.spec.ts
+@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
+ import { DESKTOP_IPC, type DshDesktopStartupApi } from '../src/ipc.ts'
+ 
+ const electron = vi.hoisted(() => ({
++  webUtils: { getPathForFile: vi.fn().mockReturnValue('/tmp/skills') },
+   contextBridge: { exposeInMainWorld: vi.fn() },
+   ipcRenderer: { invoke: vi.fn(), on: vi.fn(), off: vi.fn() },
+ }))
+@@ -37,3 +38,31 @@ it('provides startup controls and a removable state subscription to shell docume
+   expect(electron.ipcRenderer.off).toHaveBeenCalledWith(DESKTOP_IPC.backendState, handler)
+   expect(api).not.toHaveProperty('plugins')
+ })
++
++
++it('exposes an isolated native menu bridge only for the integrated application window', async () => {
++  vi.stubGlobal('location', new URL('dsh-app://app/index.html'))
++  vi.stubGlobal('process', { ...process, argv: [...process.argv, '--matou-integrated-chrome'] })
++  await import('../src/preload-app.ts')
++  const api = electron.contextBridge.exposeInMainWorld.mock.calls[0]?.[1] as { integratedTitlebar: boolean; showAppMenu(): Promise<void> }
++  expect(api.integratedTitlebar).toBe(true)
++  await api.showAppMenu()
++  expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith(DESKTOP_IPC.applicationMenu)
++})
++
++it('does not expose the menu to unowned documents even with the window flag', async () => {
++  vi.stubGlobal('location', new URL('https://example.test'))
++  vi.stubGlobal('process', { ...process, argv: [...process.argv, '--matou-integrated-chrome'] })
++  await import('../src/preload-app.ts')
++  expect(electron.contextBridge.exposeInMainWorld).toHaveBeenCalledWith('dshDesktop', { protocolVersion: 1 })
++})
++
++it('exposes native paths only through the integrated desktop File bridge', async () => {
++  vi.stubGlobal('location', new URL('dsh-app://app/index.html'))
++  vi.stubGlobal('process', { ...process, argv: [...process.argv, '--matou-integrated-chrome'] })
++  await import('../src/preload-app.ts')
++  const api = electron.contextBridge.exposeInMainWorld.mock.calls[0]?.[1] as { getPathForFile(file: File): string }
++  const file = {} as File
++  expect(api.getPathForFile(file)).toBe('/tmp/skills')
++  expect(electron.webUtils.getPathForFile).toHaveBeenCalledWith(file)
++})
+diff --git a/packages/api/session-controller/src/client/contract/sessions.ts b/packages/api/session-controller/src/client/contract/sessions.ts
+index 08c13a208e..114683b0da 100644
+--- a/packages/api/session-controller/src/client/contract/sessions.ts
++++ b/packages/api/session-controller/src/client/contract/sessions.ts
+@@ -42,6 +42,22 @@ export interface ISessions {
+    * @param id - session id (must exist in the list; unknown ids fail loud).
+    */
+   open(id: SessionId): void
++  /**
++   * Keep a session on stage beside `current` for multi-pane rendering: its
++   * event window opens and its scope stays alive until `unpin()`. Idempotent;
++   * an unlisted id is ignored. Never moves the selection.
++   * @param id - session id.
++   */
++  pin(id: SessionId): void
++  /**
++   * Release a pinned session: it leaves the stage unless it is `current` (a
++   * still-listed session keeps its scope; a deferred removal proceeds).
++   * Idempotent.
++   * @param id - session id.
++   */
++  unpin(id: SessionId): void
++  /** The staged set (`current` ∪ pinned) in host order. */
++  readonly staged: readonly SessionId[]
+   /**
+    * Open a healthy catalog child through its exact direct-parent address.
+    * @param address - catalog-derived parent and child ids.
+diff --git a/packages/api/session-controller/src/client/sessions/service.ts b/packages/api/session-controller/src/client/sessions/service.ts
+index d1d840c513..92cf1fee9e 100644
+--- a/packages/api/session-controller/src/client/sessions/service.ts
++++ b/packages/api/session-controller/src/client/sessions/service.ts
+@@ -84,6 +84,8 @@ export interface SessionListState {
+   jobsBySession: Readonly<Record<SessionId, readonly JobView[]>>
+   /** Current session's catalog-derived address, absent on ordinary navigation. */
+   currentAddress: SubagentAddress | undefined
++  /** Sessions whose event window is open (`current` ∪ pinned), host order; frozen removed-but-staged ids trail. */
++  staged: readonly SessionId[]
+ }
+ 
+ /** Persisted navigation cell: address survives refresh for correct history routing. */
+@@ -205,12 +207,15 @@ export class ClientSessions implements ISessions {
+   /** In-flight scope drops remain here after records leave `scopes`, so root disposal can await quiescence. */
+   private readonly scopeDrops = new Set<Promise<void>>()
+   /**
+-   * The staged session id — follows `list.current` exactly, holding its last
+-   * defined value across masked gaps (a transiently absent selection blanks
+-   * `current` without moving the stage, so reconnect re-pulls and removals
+-   * keep the staged scope's frozen view alive until the stage moves on).
++   * The staged session ids — `current` (holding its last defined value across
++   * masked gaps: a transiently absent selection blanks `current` without
++   * moving its stage slot, so reconnect re-pulls and removals keep the frozen
++   * view alive until the stage moves on) plus every pinned session. Staging IS
++   * the open signal: a window is open ⟺ its session is on stage.
+    */
+-  private watched: SessionId | undefined
++  private readonly stagedIds = new Set<SessionId>()
++  /** Sessions kept on stage beside `current` by explicit `pin()` (multi-pane rendering). */
++  private readonly pinned = new Set<SessionId>()
+   /** Removed-while-staged sessions whose teardown waits for the stage to move away. */
+   private readonly deferredRemovals = new Set<SessionId>()
+ 
+@@ -233,7 +238,7 @@ export class ClientSessions implements ISessions {
+     )
+     this.list = createSnapshotStore<SessionListState>({
+       ids: [], byId: {}, current: undefined, phase: 'pending',
+-      subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
++      subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [],
+     })
+     // The manager owns wire truth; the store is its projection. Manager
+     // notifications are already microtask-batched.
+@@ -247,7 +252,7 @@ export class ClientSessions implements ISessions {
+     // the follower writes no list state — session.open()'s synchronous prefix
+     // touches only session-side state and its own microtask-batched notifier.
+     const disposeStageFollower = this.list.subscribe(() => {
+-      this.followCurrent()
++      this.reconcileStage()
+     })
+     rootCtx.effect(() => async () => {
+       disposeStageFollower()
+@@ -255,7 +260,8 @@ export class ClientSessions implements ISessions {
+       const scopes = [...this.scopes]
+       this.scopes.clear()
+       this.deferredRemovals.clear()
+-      this.watched = undefined
++      this.stagedIds.clear()
++      this.pinned.clear()
+       for (const [id, record] of scopes) this.startScopeDrop(id, record)
+       await this.drainScopeDrops()
+       await this.manager.dispose()
+@@ -511,29 +517,94 @@ export class ClientSessions implements ISessions {
+   }
+ 
+   /**
+-   * Move the stage to the list's current session: sweep teardowns deferred
+-   * behind the previous occupant and pull the new occupant's history window.
+-   * Staging IS the open signal — the window opens ⟺ the session is on stage
+-   * — and open() is idempotent (an in-flight or completed open no-ops; a
+-   * failed one retries the next time current is touched).
++   * Keep a session on stage beside `current`: its event window opens and its
++   * scope stays alive until `unpin()`. Idempotent; an id that is not listed
++   * (nor currently addressed) is ignored. Pinning never moves the selection —
++   * focus and staging are orthogonal.
++   * @param id - session id.
+    */
+-  private followCurrent(): void {
++  pin(id: SessionId): void {
++    if (this.pinned.has(id) || !this.eligible(id)) return
++    this.pinned.add(id)
++    this.reconcileStage()
++  }
++
++  /**
++   * Release a pinned session: it leaves the stage unless it is `current`. A
++   * still-listed session keeps its scope (as when the selection moves on); a
++   * removal that was deferred behind the stage now proceeds. Idempotent.
++   * @param id - session id.
++   */
++  unpin(id: SessionId): void {
++    if (!this.pinned.delete(id)) return
++    this.reconcileStage()
++  }
++
++  /** The staged set (`current` ∪ pinned) in host order; frozen removed-but-staged ids trail. */
++  get staged(): readonly SessionId[] {
++    return this.list.getSnapshot().staged
++  }
++
++  /**
++   * Align the stage with `current` ∪ pinned: sweep teardowns deferred behind
++   * sessions that left the stage and pull the history window of every session
++   * that just entered it. Staging IS the open signal — the window opens ⟺ the
++   * session is on stage — and open() is idempotent (an in-flight or completed
++   * open no-ops; a failed one retries the next time the stage is touched).
++   */
++  private reconcileStage(): void {
+     const snapshot = this.list.getSnapshot()
+     const current = snapshot.current
+-    // A masked gap (current blanked while the selection's session is
+-    // transiently absent) holds the stage: tearing down on the gap would
+-    // destroy exactly the frozen scope the mask exists to preserve.
+-    if (current === undefined || snapshot.byId[current] === undefined || current === this.watched) return
+-    this.watched = current
++    const desired = new Set<SessionId>(this.pinned)
++    if (current !== undefined && snapshot.byId[current] !== undefined) {
++      desired.add(current)
++    } else {
++      // A masked gap (current blanked while the selection's session is
++      // transiently absent) holds the stage: tearing down on the gap would
++      // destroy exactly the frozen scope the mask exists to preserve.
++      for (const id of this.stagedIds) if (!this.pinned.has(id)) desired.add(id)
++    }
++    let changed = false
++    for (const id of [...this.stagedIds]) {
++      if (!desired.has(id)) {
++        this.stagedIds.delete(id)
++        changed = true
++      }
++    }
++    const entered: SessionId[] = []
++    for (const id of desired) {
++      if (!this.stagedIds.has(id)) {
++        this.stagedIds.add(id)
++        entered.push(id)
++        changed = true
++      }
++    }
++    if (!changed) return
+     this.sweepDeferred()
+-    const record = this.resolve(current)
+-    /* v8 ignore next 3 -- defensive: current is always a listed id (open()
+-     * validates and the projection masks absent selections), so resolve
+-     * cannot miss; kept so a future current writer cannot crash the notify. */
+-    if (record !== undefined) {
+-      void record.session.open()
+-      void this.manager.refreshSubagents(current)
++    for (const id of entered) {
++      const record = this.resolve(id)
++      /* v8 ignore next 3 -- defensive: a staged id is always eligible (open()
++       * validates, pin() checks, the projection masks absent selections), so
++       * resolve cannot miss; kept so a future stage writer cannot crash the notify. */
++      if (record !== undefined) {
++        void record.session.open()
++        void this.manager.refreshSubagents(id)
++      }
+     }
++    this.publishStaged()
++  }
++
++  /** Host-ordered staged ids, frozen (removed but still staged) ids trailing. */
++  private stagedProjection(ids: readonly SessionId[]): SessionId[] {
++    const staged = ids.filter(id => this.stagedIds.has(id))
++    for (const id of this.stagedIds) if (!staged.includes(id)) staged.push(id)
++    return staged
++  }
++
++  /** Republish only the staged projection; the follower re-enters and finds nothing changed. */
++  private publishStaged(): void {
++    const snapshot = this.list.getSnapshot()
++    this.list.set({ ...snapshot, staged: this.stagedProjection(snapshot.ids) })
+   }
+ 
+   /**
+@@ -642,7 +713,10 @@ export class ClientSessions implements ISessions {
+         ...(currentAddress === undefined ? {} : { subagentAddress: currentAddress }),
+       })
+     }
+-    this.list.set({ ids, byId, current, phase, subagentsByParent, jobsBySession, currentAddress })
++    this.list.set({
++      ids, byId, current, phase, subagentsByParent, jobsBySession, currentAddress,
++      staged: this.stagedProjection(ids),
++    })
+     this.pruneScopes()
+   }
+ 
+@@ -651,7 +725,7 @@ export class ClientSessions implements ISessions {
+     if (this.list.getSnapshot().phase === 'pending') return
+     for (const [id, record] of this.scopes) {
+       if (this.eligible(id)) continue
+-      if (id === this.watched) {
++      if (this.stagedIds.has(id)) {
+         this.deferredRemovals.add(id)
+         continue
+       }
+@@ -696,10 +770,10 @@ export class ClientSessions implements ISessions {
+   /** Run deferred teardowns whose session is no longer staged (called when the stage moves). */
+   private sweepDeferred(): void {
+     for (const id of [...this.deferredRemovals]) {
+-      /* v8 ignore next -- defensive: only the staged id ever defers, and every
+-       * stage move sweeps first, so the set cannot contain the id the stage just
+-       * moved to; kept as a guard against future extra sweep call sites. */
+-      if (id === this.watched) continue
++      /* v8 ignore next -- defensive: only staged ids ever defer, and every
++       * stage change sweeps first, so the set cannot contain an id that just
++       * entered the stage; kept as a guard against future extra sweep call sites. */
++      if (this.stagedIds.has(id)) continue
+       // Eligible again? (A re-added id cancels the deferred teardown.)
+       if (this.eligible(id)) {
+         this.deferredRemovals.delete(id)
+diff --git a/packages/client/locale/tests/language-row.client.spec.tsx b/packages/client/locale/tests/language-row.client.spec.tsx
+index d65a1c82f0..bee80f09d4 100644
+--- a/packages/client/locale/tests/language-row.client.spec.tsx
++++ b/packages/client/locale/tests/language-row.client.spec.tsx
+@@ -20,7 +20,7 @@ const OPTIONS = [{ id: 'zh', label: '中文' }, { id: 'en', label: 'English' }]
+ 
+ function emptySessions() {
+   const store = createSnapshotStore<SessionListState>(
+-    { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined })
++    { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [] })
+   return bindSnapshotSelector(store)
+ }
+ function emptyWorkspaces() {
+diff --git a/packages/client/ui-attachment/src/client/ComposerAttachments.tsx b/packages/client/ui-attachment/src/client/ComposerAttachments.tsx
+index fd469195bf..47cc932cdf 100644
+--- a/packages/client/ui-attachment/src/client/ComposerAttachments.tsx
++++ b/packages/client/ui-attachment/src/client/ComposerAttachments.tsx
+@@ -9,6 +9,7 @@ import { DropOverlay } from '../DropOverlay.tsx'
+ import { FileCard } from '../FileCard.tsx'
+ import { ImageLightbox } from '../ImageLightbox.tsx'
+ import { attachmentRailLabels, dropOverlayLabels, fileCardLabels, lightboxLabels } from './labels.ts'
++import { splitDroppedFiles } from './drop-files.ts'
+ import css from './ComposerAttachments.module.css'
+ 
+ /** Rail item retaining its browser-owned attachment for callbacks. */
+@@ -18,8 +19,9 @@ interface ComposerRailItem extends AttachmentRailItem {
+ 
+ /** Draft image previews, pending-file cards, drop target, and original-image preview. */
+ export function ComposerAttachments({
+-  attachments, canAcceptDrop, onAddFiles, onRemoveAttachment, uploads, onRetryFile, dropLimits, t,
++  attachments, canAcceptDrop, onAddFiles, onAddDirectoryPaths, onRemoveAttachment, uploads, onRetryFile, dropLimits, t,
+ }: ComposerAttachmentsProps) {
++  const [dropError, setDropError] = useState(false)
+   const [preview, setPreview] = useState<ComposerImageAttachment | null>(null)
+   const [dragActive, setDragActive] = useState(false)
+   const dragDepth = useRef(0)
+@@ -63,7 +65,13 @@ export function ComposerAttachments({
+       if (dataTransfer === null) return
+       event.preventDefault()
+       reset()
+-      if (canAcceptDrop) onAddFiles([...dataTransfer.files])
++      if (canAcceptDrop) {
++        const desktop = (globalThis as typeof globalThis & { dshDesktop?: { getPathForFile?: (file: File) => string } }).dshDesktop
++        const batch = splitDroppedFiles(dataTransfer, desktop?.getPathForFile)
++        setDropError(batch.unsupported.length > 0 || (batch.directories.length > 0 && !onAddDirectoryPaths))
++        if (batch.files.length > 0) onAddFiles(batch.files)
++        if (batch.directories.length > 0) onAddDirectoryPaths?.(batch.directories)
++      }
+     }
+     document.addEventListener('dragenter', onDragEnter)
+     document.addEventListener('dragover', onDragOver)
+@@ -77,7 +85,7 @@ export function ComposerAttachments({
+       document.removeEventListener('drop', onDrop)
+       window.removeEventListener('dragend', reset)
+     }
+-  }, [canAcceptDrop, onAddFiles])
++  }, [canAcceptDrop, onAddFiles, onAddDirectoryPaths])
+ 
+   const railItems = useMemo<ComposerRailItem[]>(() => attachments.map(attachment => ({
+     id: attachment.id,
+@@ -86,6 +94,7 @@ export function ComposerAttachments({
+ 
+   return (
+     <>
++      {dropError && <div role="alert">{t('file.folderDropUnavailable')}</div>}
+       {dragActive && (
+         <DropOverlay
+           disabled={!canAcceptDrop}
+diff --git a/packages/client/ui-attachment/tests/composer-attachments.client.spec.tsx b/packages/client/ui-attachment/tests/composer-attachments.client.spec.tsx
+index c0d0920c52..8811d4302b 100644
+--- a/packages/client/ui-attachment/tests/composer-attachments.client.spec.tsx
++++ b/packages/client/ui-attachment/tests/composer-attachments.client.spec.tsx
+@@ -277,3 +277,19 @@ describe('ComposerAttachments file drafts', () => {
+     expect(view.getByTitle('.env').textContent).toContain('ENV 3B')
+   })
+ })
++
++it('routes a native folder drop to path intake, never to the uploader', () => {
++  const onAddFiles = vi.fn()
++  const onAddDirectoryPaths = vi.fn()
++  const file = new File([], 'skills')
++  vi.stubGlobal('dshDesktop', { getPathForFile: () => '/tmp/my skills' })
++  render(<ComposerAttachments {...props({ onAddFiles, onAddDirectoryPaths })} />)
++  fireEvent.drop(document.body, { dataTransfer: {
++    types: ['Files'], files: [file], items: [{
++      kind: 'file', getAsFile: () => file,
++      webkitGetAsEntry: () => ({ isDirectory: true, name: 'skills' }),
++    }],
++  } })
++  expect(onAddDirectoryPaths).toHaveBeenCalledWith(['/tmp/my skills'])
++  expect(onAddFiles).not.toHaveBeenCalled()
++})
+diff --git a/packages/client/ui-chat/src/client/apply.ts b/packages/client/ui-chat/src/client/apply.ts
+index e0b5718ecc..5af21cfa29 100644
+--- a/packages/client/ui-chat/src/client/apply.ts
++++ b/packages/client/ui-chat/src/client/apply.ts
+@@ -156,6 +156,12 @@ export function apply(ctx: Context): void {
+             read: () => chatScrollPositions.get(sessionId) ?? null,
+           },
+           forkAt: (seq) => {
++            // A layout may own naming, placement and navigation. With no
++            // handler (including after plugin disposal), retain stock behavior.
++            const request = new CustomEvent('dsh:conversation-fork-request', {
++              cancelable: true, detail: { sessionId, atSeq: seq },
++            })
++            if (!window.dispatchEvent(request)) return
+             ctx.sessions.fork({ sessionId, atSeq: seq, increaseTitle: true })
+               .then((childId) => { ctx.sessions.open(childId) })
+               .catch(() => {
+diff --git a/packages/client/ui-chat/tests/apply-inject.client.spec.tsx b/packages/client/ui-chat/tests/apply-inject.client.spec.tsx
+index b0a7c372ff..cf9682f88d 100644
+--- a/packages/client/ui-chat/tests/apply-inject.client.spec.tsx
++++ b/packages/client/ui-chat/tests/apply-inject.client.spec.tsx
+@@ -93,6 +93,23 @@ async function bench() {
+ }
+ 
+ describe('Chat inject API', () => {
++  it('lets a layout claim message branching, restoring stock behavior after disposal', async () => {
++    const b = await bench()
++    const { injected } = b.chatViewApi(ROOT)
++    const fork = vi.spyOn(b.runtime.sessions, 'fork')
++    const listener = vi.fn((event: Event) => { event.preventDefault() })
++    window.addEventListener('dsh:conversation-fork-request', listener)
++    try {
++      injected.forkAt(17)
++      expect(listener).toHaveBeenCalledOnce()
++      expect((listener.mock.calls[0]![0] as CustomEvent).detail).toEqual({ sessionId: ROOT, atSeq: 17 })
++      expect(fork).not.toHaveBeenCalled()
++    } finally { window.removeEventListener('dsh:conversation-fork-request', listener) }
++    injected.forkAt(18)
++    expect(fork).toHaveBeenCalledWith({ sessionId: ROOT, atSeq: 18, increaseTitle: true })
++    await b.runtime.dispose()
++  })
++
+   it('loads older history and forks through the Session Controller', async () => {
+     const b = await bench()
+     const { injected } = b.chatViewApi(ROOT)
+diff --git a/packages/client/ui-chat/tests/chat-view.client.spec.tsx b/packages/client/ui-chat/tests/chat-view.client.spec.tsx
+index c724bf7ba6..941de95b86 100644
+--- a/packages/client/ui-chat/tests/chat-view.client.spec.tsx
++++ b/packages/client/ui-chat/tests/chat-view.client.spec.tsx
+@@ -199,7 +199,7 @@ const compaction = (over: Partial<CompactionSummaryNode> = {}): CompactionSummar
+ /** Empty sessions-list hook for the global standard-kit seat. */
+ function emptySessions() {
+   const store = createSnapshotStore<SessionListState>(
+-    { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined })
++    { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [] })
+   return bindSnapshotSelector(store)
+ }
+ 
+diff --git a/packages/client/ui-chat/tests/transcript-view-row.client.spec.tsx b/packages/client/ui-chat/tests/transcript-view-row.client.spec.tsx
+index 288bdce31d..3004e96621 100644
+--- a/packages/client/ui-chat/tests/transcript-view-row.client.spec.tsx
++++ b/packages/client/ui-chat/tests/transcript-view-row.client.spec.tsx
+@@ -14,7 +14,7 @@ afterEach(cleanup)
+ 
+ function emptySessions() {
+   return bindSnapshotSelector(createSnapshotStore<SessionListState>({
+-    ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
++    ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [],
+   }))
+ }
+ 
+diff --git a/packages/client/ui-conversation/src/client/contract/slots.ts b/packages/client/ui-conversation/src/client/contract/slots.ts
+index 795090f465..0d1c809414 100644
+--- a/packages/client/ui-conversation/src/client/contract/slots.ts
++++ b/packages/client/ui-conversation/src/client/contract/slots.ts
+@@ -62,6 +62,8 @@ export interface ComposerAttachmentsOwnerProps {
+   canAcceptDrop: boolean
+   /** Add one dropped batch through the composer's validation path. */
+   onAddFiles: (files: readonly File[]) => void
++  /** Desktop folders are path references, never byte uploads. */
++  onAddDirectoryPaths?: (paths: readonly string[]) => void
+   /** Remove one draft attachment through the Conversation service. */
+   onRemoveAttachment: (id: DraftAttachmentId) => void
+   /** Current per-draft upload states for file-kind attachments. */
+diff --git a/packages/client/ui-conversation/src/client/locales.ts b/packages/client/ui-conversation/src/client/locales.ts
+index 56da231c15..f67ca778e4 100644
+--- a/packages/client/ui-conversation/src/client/locales.ts
++++ b/packages/client/ui-conversation/src/client/locales.ts
+@@ -54,6 +54,7 @@ export const zh = {
+   'file.remove': '移除文件 {name}',
+   'file.uploading': '上传中…',
+   'file.uploadFailed': '上传失败，点击重试',
++  'file.folderDropUnavailable': '文件夹应作为目录路径引用，请在桌面 App 拖入，或将完整路径粘贴到输入框。',
+   'file.retry': '重试上传 {name}',
+   'file.stillUploading': '文件还在上传，请等待上传完成后发送',
+   'file.sessionUnavailable': '会话不可用，无法上传文件',
+@@ -220,6 +221,7 @@ export const en = {
+   'file.remove': 'Remove file {name}',
+   'file.uploading': 'Uploading…',
+   'file.uploadFailed': 'Upload failed; click to retry',
++  'file.folderDropUnavailable': 'Use the desktop app to drop a folder, or paste its full path into the composer.',
+   'file.retry': 'Retry uploading {name}',
+   'file.stillUploading': 'Files are still uploading; send after they finish',
+   'file.sessionUnavailable': 'Session unavailable; files cannot be uploaded',
+diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
+index 6b7d83f3f6..a5524abe95 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
+@@ -445,6 +445,7 @@ export const InputBar = memo(function InputBar({
+           attachments,
+           canAcceptDrop,
+           onAddFiles: intakeFiles,
++          onAddDirectoryPaths: paths => { if (canAcceptDrop) keyboard?.paste(paths.map(path => JSON.stringify(path)).join(' ' ) + ' ') },
+           onRemoveAttachment: (id) => { removeAttachment?.(id) },
+           uploads,
+           onRetryFile: (id) => { retryFileUpload?.(id) },
+diff --git a/packages/client/ui-conversation/tests/conversation-registry.client.spec.ts b/packages/client/ui-conversation/tests/conversation-registry.client.spec.ts
+index 2d3a003756..ad03411e33 100644
+--- a/packages/client/ui-conversation/tests/conversation-registry.client.spec.ts
++++ b/packages/client/ui-conversation/tests/conversation-registry.client.spec.ts
+@@ -75,6 +75,7 @@ function fakeSessions(ctx: Context): { sessions: ISessions; binding: SessionBind
+     phase: 'ready',
+     subagentsByParent: {},
+     jobsBySession: {},
++    staged: [],
+     currentAddress: undefined,
+   })
+   const sessions = {
+@@ -94,6 +95,9 @@ function fakeSessions(ctx: Context): { sessions: ISessions; binding: SessionBind
+     scopeOf: candidate => candidate === binding.ctx ? SESSION_ID : undefined,
+     sessionOf: candidate => candidate === binding.ctx ? binding.session : undefined,
+     binding: id => id === SESSION_ID ? binding : undefined,
++    pin: () => {},
++    unpin: () => {},
++    staged: [],
+   } satisfies ISessions
+   return { sessions, binding }
+ }
+diff --git a/packages/client/ui-conversation/tests/enter-behavior-row.client.spec.tsx b/packages/client/ui-conversation/tests/enter-behavior-row.client.spec.tsx
+index 66011fc2b0..616e4a5ff9 100644
+--- a/packages/client/ui-conversation/tests/enter-behavior-row.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/enter-behavior-row.client.spec.tsx
+@@ -22,7 +22,7 @@ afterEach(() => {
+ 
+ function emptySessions() {
+   return bindSnapshotSelector(createSnapshotStore<SessionListState>({
+-    ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
++    ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [],
+   }))
+ }
+ 
+diff --git a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
+index 13266b1ca2..4e666a837b 100644
+--- a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
+@@ -173,7 +173,7 @@ function bench(over?: BenchOptions) {
+     useResource,
+     useSessions: bindSnapshotSelector(createSnapshotStore<SessionListState>({
+       ids: [], byId: {}, current: undefined, phase: 'ready',
+-      subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
++      subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [],
+     })),
+     useWorkspaces: bindSnapshotSelector(createSnapshotStore({
+       items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null,
+diff --git a/packages/client/ui-conversation/tests/input-matrix.client.spec.tsx b/packages/client/ui-conversation/tests/input-matrix.client.spec.tsx
+index b16470fdd8..78566559ff 100644
+--- a/packages/client/ui-conversation/tests/input-matrix.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/input-matrix.client.spec.tsx
+@@ -54,7 +54,7 @@ function mountBar(shell: SessionInputShell, over?: { running?: boolean; disabled
+     useSession: bindSnapshotSelector(session),
+     useSessions: bindSnapshotSelector(createSnapshotStore({
+       ids: [], byId: {}, current: undefined, phase: 'ready',
+-      subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
++      subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [],
+     })),
+     useSessionPendingInteraction: bindSnapshotSelector(
+       createSnapshotStore<SessionPendingInteractionSnapshot>(new Map()),
+diff --git a/packages/client/ui-conversation/tests/input-scenarios.client.spec.tsx b/packages/client/ui-conversation/tests/input-scenarios.client.spec.tsx
+index 42bf54913c..12293cc22d 100644
+--- a/packages/client/ui-conversation/tests/input-scenarios.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/input-scenarios.client.spec.tsx
+@@ -145,7 +145,7 @@ async function scopedBench(register?: (inputTriggers: InputTriggerService) => vo
+     useSession: bindSnapshotSelector(sessionStore),
+     useSessions: bindSnapshotSelector(createSnapshotStore({
+       ids: [], byId: {}, current: undefined, phase: 'ready',
+-      subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
++      subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [],
+     })),
+     useSessionPendingInteraction: bindSnapshotSelector(
+       createSnapshotStore<SessionPendingInteractionSnapshot>(new Map()),
+diff --git a/packages/client/ui-conversation/tests/skeleton.client.spec.tsx b/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
+index f515f20ce1..81d65b6ec8 100644
+--- a/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
+@@ -151,7 +151,7 @@ function mount(
+       ...listed && { [SID]: childRow },
+     },
+     current: SID,
+-    phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
++    phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [],
+   })
+   const workspaces = createSnapshotStore<WorkspaceSnapshot>(workspaceState(workspaceRows))
+   const session = createSnapshotStore<SessionSnapshot>(snapshot)
+diff --git a/packages/client/ui-deliverables/src/client/index.ts b/packages/client/ui-deliverables/src/client/index.ts
+index 1978ca934e..bb69c9b5fa 100644
+--- a/packages/client/ui-deliverables/src/client/index.ts
++++ b/packages/client/ui-deliverables/src/client/index.ts
+@@ -14,6 +14,8 @@ import type { ChatFileMentions } from '@deepseek-ai/dsh-client-ui-chat/client'
+ import type {} from '@deepseek-ai/dsh-client-locale/client'
+ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
++import type {} from '@deepseek-ai/dsh-api-session-controller/client'
++import { resolveWorkspacePath } from '@deepseek-ai/dsh-util-workspace-path'
+ import { PresentedOpenController } from './present-open.ts'
+ import { PresentRow } from './PresentRow.tsx'
+ import { Deliverables, selectDeliverables, type DeliverablesInjected } from './Deliverables.tsx'
+@@ -65,12 +67,20 @@ export function apply(ctx: ClientContext): void {
+   // via ctx.get, so its absence — this plugin composed out — is the off state.
+   const t = ctx.locale.bind(NS)
+   const mentions: ChatFileMentions = {
+-    forClosing(owner) {
++    forClosing(owner, sessionId) {
+       const paths = selectProducedFiles(owner)
+       const presented = presentedForClosing(owner)
+       if (paths === null && presented.length === 0) return undefined
+       return producedFileMentions([...new Set([...paths ?? [], ...presented.map(file => file.path)])], owner.openFile,
+-        path => t('presented.previewButton', { name: path }))
++        path => t('presented.previewButton', { name: path }), path => ({
++          revealLabel: t('presented.finder'),
++          revealError: t('presented.directoryError'),
++          reveal: async () => {
++            const cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
++            const result = await ctx.remote.session.openWorkspacePath({ path: resolveWorkspacePath(cwd, path), action: 'reveal' })
++            if (!result.ok) throw result.error
++          },
++        }))
+     },
+   }
+   ctx.provide('chatFileMentions', mentions)
+diff --git a/packages/client/ui-deliverables/src/client/turn-deliverables.ts b/packages/client/ui-deliverables/src/client/turn-deliverables.ts
+index 31c78d9e57..e5e48c3171 100644
+--- a/packages/client/ui-deliverables/src/client/turn-deliverables.ts
++++ b/packages/client/ui-deliverables/src/client/turn-deliverables.ts
+@@ -243,12 +243,13 @@ export function producedFileMentions(
+   paths: readonly string[],
+   openFile: (path: string) => void,
+   label: (path: string) => string,
++  actions?: (path: string) => Partial<NonNullable<ReturnType<MarkdownFileMentions['resolve']>>>,
+ ): MarkdownFileMentions {
+   return {
+     resolve(value) {
+       const path = paths.includes(value) ? value : onlyPathWithBasename(paths, value)
+       if (path === undefined) return undefined
+-      return { open: () => { openFile(path) }, label: label(path), title: path }
++      return { ...actions?.(path), open: () => { openFile(path) }, label: label(path), title: path }
+     },
+   }
+ }
+diff --git a/packages/client/ui-deliverables/tests/produced-files.client.spec.tsx b/packages/client/ui-deliverables/tests/produced-files.client.spec.tsx
+index 1460c31415..f7c13be392 100644
+--- a/packages/client/ui-deliverables/tests/produced-files.client.spec.tsx
++++ b/packages/client/ui-deliverables/tests/produced-files.client.spec.tsx
+@@ -35,7 +35,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
+ 
+ function openProps(controller = new PresentedOpenController()) {
+   controller.host.set({ name: 'desktop', available: true, fileManager: 'finder' })
+-  const sessions: SessionListState = { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined }
++  const sessions: SessionListState = { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [] }
+   return {
+     useSessions: <T,>(select: (state: SessionListState) => T): T => select(sessions),
+     reloadPresentedHost: vi.fn(() => controller.loadHost()),
+diff --git a/packages/client/ui-input-trigger/src/client/MenuView.tsx b/packages/client/ui-input-trigger/src/client/MenuView.tsx
+index fc2bdc7cd1..2f6a8cd7c9 100644
+--- a/packages/client/ui-input-trigger/src/client/MenuView.tsx
++++ b/packages/client/ui-input-trigger/src/client/MenuView.tsx
+@@ -1,3 +1,4 @@
++import { useMenuMaxHeight } from './useMenuMaxHeight.ts'
+ /**
+  * Trigger candidate menu: renders the InputTriggerService menu store into the
+  * conversation.input.overlay anchor. Closed state renders null (the overlay
+@@ -14,7 +15,7 @@
+  */
+ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+ import clsx from 'clsx'
+-import { IconChevronRightOutline14, ReferenceIcon, useAnchoredMaxHeight } from '@deepseek-ai/dsh-client-ui-primitives'
++import { IconChevronRightOutline14, ReferenceIcon } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+ import css from './MenuView.module.css'
+ import type { MenuViewInjected } from './slots.ts'
+@@ -51,7 +52,7 @@ export function MenuView({ menu, headers, onPick, onCrumb, onHover, onDismiss, t
+   // The list is bottom-anchored above the composer; clamp the design cap to
+   // the space above it, re-measured on every store update (the anchor moves
+   // when the composer grows).
+-  const maxHeight = useAnchoredMaxHeight(listRef, MAX_HEIGHT, state)
++  const maxHeight = useMenuMaxHeight(listRef, MAX_HEIGHT, state)
+   const updateOverflowHint = useCallback(() => {
+     const viewport = viewportRef.current
+     setHasOverflowBelow(viewport !== null
+diff --git a/packages/client/ui-jobs/tests/job-list-action.client.spec.tsx b/packages/client/ui-jobs/tests/job-list-action.client.spec.tsx
+index c3f016d58e..32f59e0f2d 100644
+--- a/packages/client/ui-jobs/tests/job-list-action.client.spec.tsx
++++ b/packages/client/ui-jobs/tests/job-list-action.client.spec.tsx
+@@ -43,6 +43,7 @@ function props(jobs: readonly JobView[] | undefined): JobListActionProps {
+     phase: 'ready',
+     subagentsByParent: {},
+     jobsBySession: jobs === undefined ? {} : { [SESSION]: jobs },
++    staged: [],
+     currentAddress: undefined,
+   } satisfies SessionListState
+   function useSessions<T>(select: (snapshot: SessionListState) => T): T {
+diff --git a/packages/client/ui-layout/tests/app-frame.client.spec.tsx b/packages/client/ui-layout/tests/app-frame.client.spec.tsx
+index 2e525ae028..c4ddff1ded 100644
+--- a/packages/client/ui-layout/tests/app-frame.client.spec.tsx
++++ b/packages/client/ui-layout/tests/app-frame.client.spec.tsx
+@@ -80,6 +80,7 @@ function mountFrame(windowWidth = frameWidth) {
+     phase: 'ready',
+     subagentsByParent: {},
+     jobsBySession: {},
++    staged: [],
+     currentAddress: undefined,
+   })
+   const workspaceState: WorkspaceSnapshot = {
+diff --git a/packages/client/ui-layout/tests/document-title.client.spec.tsx b/packages/client/ui-layout/tests/document-title.client.spec.tsx
+index 5c3184970f..ad9a6950d8 100644
+--- a/packages/client/ui-layout/tests/document-title.client.spec.tsx
++++ b/packages/client/ui-layout/tests/document-title.client.spec.tsx
+@@ -23,6 +23,7 @@ function titleSources() {
+     phase: 'ready',
+     subagentsByParent: {},
+     jobsBySession: {},
++    staged: [],
+     currentAddress: undefined,
+   })
+   const panelInfo = createSnapshotStore<PanelInfo>({ activePanelId: null })
+diff --git a/packages/client/ui-primitives/src/markdown/render.tsx b/packages/client/ui-primitives/src/markdown/render.tsx
+index 4d7805553b..86ff58ec69 100644
+--- a/packages/client/ui-primitives/src/markdown/render.tsx
++++ b/packages/client/ui-primitives/src/markdown/render.tsx
+@@ -22,6 +22,7 @@ import clsx from 'clsx'
+ import type * as Md from 'mdast'
+ import type {} from 'mdast-util-math'
+ import { normalizeUri } from 'micromark-util-sanitize-uri'
++import { Menu } from '../Menu.tsx'
+ import { CodeBlock } from './CodeBlock.tsx'
+ import { renderTexToReact } from './katex.tsx'
+ import { LinkIcon, classifyLinkPath } from '../LinkIcon.tsx'
+@@ -166,7 +167,34 @@ export interface MarkdownFileMentions {
+    * @returns The opener with its accessible label and full-path title, or
+    * undefined when the token names no known file — it then stays inert code.
+    */
+-  resolve(value: string): { open: () => void; label: string; title: string } | undefined
++  resolve(value: string): { open: () => void; label: string; title: string; reveal?: () => Promise<void>; revealLabel?: string; revealError?: string } | undefined
++}
++
++/** File actions are supplied by the owner; the Markdown renderer never resolves paths. */
++function FileMention({ mention, value }: { mention: NonNullable<ReturnType<MarkdownFileMentions['resolve']>>; value: string }) {
++  const [open, setOpen] = useState(false)
++  const [pending, setPending] = useState(false)
++  const [error, setError] = useState(false)
++  const reveal = async () => {
++    if (pending) return
++    setOpen(false)
++    setPending(true)
++    setError(false)
++    try { await mention.reveal?.() }
++    catch { setError(true) }
++    finally { setPending(false) }
++  }
++  return <code>
++    <Menu open={open} portal autoFocus onClose={() => setOpen(false)}
++      items={[{ id: 'reveal', label: mention.revealLabel, disabled: pending }]}
++      onSelect={() => { void reveal() }}
++      anchor={<button type="button" className={css.fileMention} title={mention.title}
++        aria-label={mention.label} aria-busy={pending}
++        onClick={mention.open} onContextMenu={event => { event.preventDefault(); setOpen(true) }}>
++        <LinkIcon kind={classifyLinkPath(value)} className={css.linkIcon} />{value}
++      </button>} />
++    {error && <span role="alert">{mention.revealError}</span>}
++  </code>
+ }
+ 
+ /**
+@@ -304,6 +332,7 @@ function renderNode(node: Md.RootContent, key: Key, context: MarkdownRenderConte
+       // Inside an anchor the token stays inert — a button cannot nest there.
+       const mention = context.inLink === true ? undefined : context.fileMentions?.resolve(value)
+       if (mention !== undefined) {
++        if (mention.reveal) return <FileMention key={key} mention={mention} value={value} />
+         return (
+           <code key={key}>
+             <button
+diff --git a/packages/client/ui-renderer/src/client/bindings.tsx b/packages/client/ui-renderer/src/client/bindings.tsx
+index fde55a366c..ddbb6939f0 100644
+--- a/packages/client/ui-renderer/src/client/bindings.tsx
++++ b/packages/client/ui-renderer/src/client/bindings.tsx
+@@ -126,18 +126,33 @@ export function RootStandardProvider({ children }: { children: ReactNode }) {
+   return <RootBindingContext.Provider value={binding}>{children}</RootBindingContext.Provider>
+ }
+ 
+-/** Subscribe to the scope roster before resolving and binding its current adapter. */
++/**
++ * Subscribe to the scope roster before resolving and binding its current
++ * adapter. With `sessionKey` the subtree binds to that Session instead of the
++ * selection (multi-pane rendering); the current subscription is kept so the
++ * hook order never depends on the key, and the keyed binding falls back to
++ * the current one while the key is unavailable.
++ */
+ export function ScopeProvider({
+   scope,
++  sessionKey,
+   children,
+ }: {
+   scope: 'session' | 'session-maybe'
++  sessionKey?: string | undefined
+   children: ReactNode
+ }) {
+   const host = useHost()
+   observableHook(host.scopeRevision)(value => value)
+   const adapter = host.scope(scope)
+   if (adapter === undefined) throw new SlotAssemblyError(`scope '${scope}' rendered without an installed adapter`)
+-  const binding = observableHook(adapter.current)(value => value)
++  const current = observableHook(adapter.current)(value => value)
++  const keyedSource = sessionKey === undefined || adapter.observe === undefined
++    ? absentSource
++    : adapter.observe(sessionKey)
++  const keyed = observableHook(keyedSource)(value => value) as StandardSourceBinding | undefined
++  const binding = sessionKey === undefined
++    ? current
++    : keyed ?? adapter.resolve(sessionKey) ?? current
+   return <ScopeBindingContext.Provider value={binding}>{children}</ScopeBindingContext.Provider>
+ }
+diff --git a/packages/client/ui-renderer/src/client/scoped-slots.tsx b/packages/client/ui-renderer/src/client/scoped-slots.tsx
+index 3a5ecb8373..69f406f6a3 100644
+--- a/packages/client/ui-renderer/src/client/scoped-slots.tsx
++++ b/packages/client/ui-renderer/src/client/scoped-slots.tsx
+@@ -38,6 +38,18 @@ type RenderSlotChainBinding = (key: string, owner: object, opts?: ChainRenderOpt
+  */
+ const renderSlotCache = new WeakMap<StoredEntry, RenderSlotBinding>()
+ 
++/**
++ * The outlet for one renderSlot dispatch; a `sessionKey` wraps it in a keyed
++ * session scope (multi-pane rendering). The two branches are different element
++ * structures on purpose: switching the key remounts the subtree, which keeps
++ * per-session component state from leaking across sessions.
++ */
++function keyedOutlet(key: string, owner: object, opts: RenderOpts | undefined): ReactNode {
++  const outlet = <SlotOutlet slotKey={key} ownerProps={owner} opts={opts} />
++  if (opts?.sessionKey === undefined) return outlet
++  return <ScopeProvider scope="session" sessionKey={opts.sessionKey}>{outlet}</ScopeProvider>
++}
++
+ function boundRenderSlot(host: SlotRendererHost, entry: StoredEntry): RenderSlotBinding {
+   let binding = renderSlotCache.get(entry)
+   if (!binding) {
+@@ -53,7 +65,7 @@ function boundRenderSlot(host: SlotRendererHost, entry: StoredEntry): RenderSlot
+       if (declared.kind === 'chain') {
+         throw new SlotOwnershipError(`slot '${key}' is declared 'chain' — use renderSlotChain`)
+       }
+-      return <SlotOutlet slotKey={key} ownerProps={owner} opts={opts} />
++      return keyedOutlet(key, owner, opts)
+     }
+     renderSlotCache.set(entry, binding)
+   }
+@@ -82,7 +94,7 @@ function boundRenderSlotChain(host: SlotRendererHost, entry: StoredEntry): Rende
+       if (declared.kind !== 'chain') {
+         throw new SlotOwnershipError(`slot '${key}' is declared '${declared.kind}', not 'chain' — use renderSlot`)
+       }
+-      return <SlotOutlet slotKey={key} ownerProps={owner} opts={opts} />
++      return keyedOutlet(key, owner, opts)
+     }
+     renderSlotChainCache.set(entry, binding)
+   }
+@@ -403,9 +415,19 @@ function scopeAreaProvider(adapter: SlotScopeAdapter): SessionProviderComponent
+     throw new SlotAssemblyError("scope 'session' adapter does not provide its area renderer")
+   }
+   const renderArea = adapter.renderArea.bind(adapter)
+-  Provider = function ScopeAreaProvider(props: SessionAreaProps): ReactNode {
++  const Area = function ScopeArea(props: SessionAreaProps): ReactNode {
+     return renderArea(useScopeBinding(), props)
+   }
++  Provider = function ScopeAreaProvider(props: SessionAreaProps): ReactNode {
++    // A keyed area binds its subtree to that Session first (multi-pane
++    // rendering); the area then reads the keyed binding like any other.
++    if (props.sessionKey === undefined) return <Area {...props} />
++    return (
++      <ScopeProvider scope="session" sessionKey={props.sessionKey}>
++        <Area {...props} />
++      </ScopeProvider>
++    )
++  }
+   scopeAreaCache.set(adapter, Provider)
+   return Provider
+ }
+diff --git a/packages/client/ui-renderer/tests/scoped-slots.client.spec.tsx b/packages/client/ui-renderer/tests/scoped-slots.client.spec.tsx
+index 1052bc0105..d552a9aaba 100644
+--- a/packages/client/ui-renderer/tests/scoped-slots.client.spec.tsx
++++ b/packages/client/ui-renderer/tests/scoped-slots.client.spec.tsx
+@@ -1148,3 +1148,80 @@ describe('session-maybe adoption identity', () => {
+     expect(view.container.textContent).toBe('replacement#1')
+   })
+ })
++
++describe('keyed session scope (multi-pane rendering)', () => {
++  it('renderSlot with sessionKey binds its subtree to that Session while the outside follows current', () => {
++    const h = makeHost()
++    h.declare('k.session', SINGLE_SESSION)
++    h.addSession('a')
++    h.addSession('b')
++    h.current.set('a')
++    const mounts: string[] = []
++    h.add('k.session', {
++      component: ({ sessionId }: { sessionId?: string }) => {
++        useEffect(() => { mounts.push(sessionId ?? '?') }, [])
++        return <b>{sessionId}</b>
++      },
++    })
++    let setKey: (key: string) => void = () => {}
++    function KeyedPane({ renderSlot }: { renderSlot: RenderSlotFn }) {
++      const [key, set] = useState('b')
++      setKey = set
++      return <span data-testid="keyed">{renderSlot('k.session', {}, { sessionKey: key })}</span>
++    }
++    const view = mountRoot(h, { 'k.session': SINGLE_SESSION }, (renderSlot, Provider) => (
++      <>
++        <Provider empty={() => <i>empty</i>}>{renderSlot('k.session', {})}</Provider>
++        <KeyedPane renderSlot={renderSlot} />
++      </>
++    )).view
++    expect(view.container.textContent).toBe('ab')
++    // Moving the selection changes (and remounts) only the unkeyed pane.
++    act(() => { h.current.set('b') })
++    expect(view.container.textContent).toBe('bb')
++    act(() => { h.current.set('a') })
++    expect(view.container.textContent).toBe('ab')
++    expect(mounts).toEqual(['a', 'b', 'b', 'a'])
++    // Switching the key remounts the keyed subtree (no cross-session state leak).
++    act(() => { setKey('a') })
++    expect(view.container.textContent).toBe('aa')
++    expect(mounts).toEqual(['a', 'b', 'b', 'a', 'a'])
++  })
++
++  it('SessionProvider with sessionKey renders that Session area even with no selection, and falls back when the key is unknown', () => {
++    const h = makeHost()
++    h.declare('k.session', SINGLE_SESSION)
++    h.addSession('b')
++    h.add('k.session', { component: ({ sessionId }: { sessionId?: string }) => <b>{sessionId}</b> })
++    const view = mountRoot(h, { 'k.session': SINGLE_SESSION }, (renderSlot, Provider) => (
++      <>
++        <Provider sessionKey="b" empty={() => <i>empty</i>}>{renderSlot('k.session', {})}</Provider>
++        <Provider sessionKey="missing" empty={() => <i>none</i>}>{renderSlot('k.session', {})}</Provider>
++      </>
++    )).view
++    expect(view.container.textContent).toBe('bnone')
++  })
++
++  it('prefers the adapter\'s keyed observation when it is installed', () => {
++    const h = makeHost()
++    h.declare('k.session', SINGLE_SESSION)
++    const first = h.addSession('b', { sid: 'b1' })
++    h.add('k.session', { component: ({ sessionId }: { sessionId?: string }) => <b>{sessionId}</b> })
++    const observed = observable<ScopedStandardSourceBinding | undefined>(first)
++    h.replaceScope({
++      current: observable<StandardSourceBinding>({
++        key: undefined, hooks: { session: undefined }, keyedHooks: {}, props: { sessionId: undefined },
++      }),
++      resolve: () => undefined,
++      observe: () => observed,
++      renderArea: (binding, { empty, children }) => binding.key === undefined ? <>{empty?.() ?? null}</> : <>{children}</>,
++    })
++    const view = mountRoot(h, { 'k.session': SINGLE_SESSION }, (renderSlot, Provider) => (
++      <Provider sessionKey="b" empty={() => <i>empty</i>}>{renderSlot('k.session', {})}</Provider>
++    )).view
++    expect(view.container.textContent).toBe('b')
++    // The observation dropping the binding empties the keyed area.
++    act(() => { observed.set(undefined) })
++    expect(view.container.textContent).toBe('empty')
++  })
++})
+diff --git a/packages/client/ui-session/src/client/index.ts b/packages/client/ui-session/src/client/index.ts
+index b720041f4d..aaaa76d6e2 100644
+--- a/packages/client/ui-session/src/client/index.ts
++++ b/packages/client/ui-session/src/client/index.ts
+@@ -218,6 +218,8 @@ export class UiSession extends Service {
+   private absent: StandardSourceBinding
+   private currentBinding: StandardSourceBinding
+   private readonly currentListeners = new Set<() => void>()
++  /** Keyed-binding observers (multi-pane rendering), notified with every current publication. */
++  private readonly keyListeners = new Map<SessionId, Set<() => void>>()
+   private readonly pendingDomains: RuntimePendingDomain[] = []
+   private pendingSnapshot: ReadonlyMap<SessionId, SessionPendingInteractionBase> = new Map()
+   private readonly pendingListeners = new Set<() => void>()
+@@ -252,6 +254,7 @@ export class UiSession extends Service {
+         },
+       },
+       resolve: key => this.resolve(key as SessionId),
++      observe: key => this.observe(key as SessionId),
+       renderArea: renderSessionArea,
+     }
+ 
+@@ -358,9 +361,34 @@ export class UiSession extends Service {
+ 
+   private publishCurrent(): void {
+     const next = this.resolveCurrent()
+-    if (next === this.currentBinding) return
+-    this.currentBinding = next
+-    notifySubscribers(this.currentListeners, '[ui-session] current binding')
++    if (next !== this.currentBinding) {
++      this.currentBinding = next
++      notifySubscribers(this.currentListeners, '[ui-session] current binding')
++    }
++    // Keyed observers re-read through resolve(); an unchanged owner yields the
++    // cached identity, so a notification without a change costs one compare.
++    for (const [key, listeners] of this.keyListeners) {
++      notifySubscribers(listeners, `[ui-session] binding ${key}`)
++    }
++  }
++
++  /** Observable over one Session's materialized binding; see SlotScopeAdapter.observe. */
++  private observe(key: SessionId): HostObservable<ScopedStandardSourceBinding | undefined> {
++    return {
++      getSnapshot: () => this.resolve(key),
++      subscribe: (listener) => {
++        let listeners = this.keyListeners.get(key)
++        if (listeners === undefined) {
++          listeners = new Set()
++          this.keyListeners.set(key, listeners)
++        }
++        listeners.add(listener)
++        return () => {
++          listeners.delete(listener)
++          if (listeners.size === 0) this.keyListeners.delete(key)
++        }
++      },
++    }
+   }
+ 
+   private publishPendingInteractions(): void {
+@@ -390,6 +418,10 @@ export class UiSession extends Service {
+     const releaseEffect = owner.ctx.effect(() => () => {
+       if (this.bindings.get(owner.sessionId) !== record) return
+       this.bindings.delete(owner.sessionId)
++      // A keyed observer of this Session (a pinned pane) must learn the drop
++      // even when the Session was not current.
++      const keyed = this.keyListeners.get(owner.sessionId)
++      if (keyed !== undefined) notifySubscribers(keyed, `[ui-session] binding ${owner.sessionId}`)
+       if (this.currentBinding !== value) return
+       this.currentBinding = this.absent
+       notifySubscribers(this.currentListeners, '[ui-session] current binding')
+diff --git a/packages/client/ui-session/tests/ui-session.client.spec.ts b/packages/client/ui-session/tests/ui-session.client.spec.ts
+index 3eca1b7a47..0b9dad60c5 100644
+--- a/packages/client/ui-session/tests/ui-session.client.spec.ts
++++ b/packages/client/ui-session/tests/ui-session.client.spec.ts
+@@ -41,6 +41,7 @@ function createSessionsBench(_ctx: Context): SessionsBench {
+     phase: 'ready',
+     subagentsByParent: {},
+     jobsBySession: {},
++    staged: [],
+     currentAddress: undefined,
+   })
+   const bindings = new Map<SessionId, SessionBinding>()
+@@ -550,3 +551,37 @@ describe('ui-session apply', () => {
+     expect(() => { nodeApply() }).not.toThrow()
+   })
+ })
++
++describe('keyed binding observation (multi-pane)', () => {
++  it('observes one Session binding: stable identity, notified on list changes, undefined after release', async () => {
++    const ctx = new Context()
++    const bench = createSessionsBench(ctx)
++    const service = createUiSession(ctx, bench)
++    const id = sessionId('s1')
++    const other = sessionId('s2')
++    bench.binding(id)
++    bench.binding(other)
++    if (service.adapter.observe === undefined) throw new Error('observe was not installed')
++    const source = service.adapter.observe(id)
++    const listener = vi.fn()
++    const off = source.subscribe(listener)
++
++    const first = source.getSnapshot()
++    expect(first?.key).toBe(id)
++    expect(source.getSnapshot()).toBe(first)
++
++    // A selection elsewhere changes the list: observers re-check, identity holds.
++    bench.select(other)
++    expect(listener).toHaveBeenCalled()
++    expect(source.getSnapshot()).toBe(first)
++
++    // Releasing the Session drops the keyed binding.
++    listener.mockClear()
++    await bench.release(id)
++    expect(listener).toHaveBeenCalled()
++    expect(source.getSnapshot()).toBeUndefined()
++
++    off()
++    await ctx.fiber.dispose()
++  })
++})
+diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+index 35fdee173b..5d417219ee 100644
+--- a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
++++ b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+@@ -206,6 +206,7 @@ export function SidebarRoot({
+             </span>
+           </button>
+         )}
++        {wide && renderSlot('sidebar.header.action', { wide })}
+         {/* Rail resting state is the whale mark; hovering swaps in the panel
+             icon (the expand affordance, figma sidebar-hover flow). */}
+         <Tooltip label={collapsed ? t('toggle.open') : t('toggle.collapse')} delayMs={500}>
+@@ -226,6 +227,7 @@ export function SidebarRoot({
+         </Tooltip>
+       </div>
+ 
++      {!wide && renderSlot('sidebar.header.action', { wide })}
+       {/* Expanded, the button carries its own label — tooltip only on the rail. */}
+       <Tooltip label={t('session.new.label')} delayMs={500} disabled={wide}>
+         <button
+diff --git a/packages/client/ui-sidebar/src/client/contract/slots.ts b/packages/client/ui-sidebar/src/client/contract/slots.ts
+index df2933430e..1ff68896e0 100644
+--- a/packages/client/ui-sidebar/src/client/contract/slots.ts
++++ b/packages/client/ui-sidebar/src/client/contract/slots.ts
+@@ -47,6 +47,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+      * Optional actions beside Settings at the sidebar foot. Declared by this
+      * package's 'sidebar' entry; each action receives only the column state.
+      */
++    'sidebar.header.action': { kind: 'list'; scope: 'root'; owner: SidebarFooterActionOwnerProps }
+     'sidebar.footer.action': { kind: 'list'; scope: 'root'; owner: SidebarFooterActionOwnerProps }
+   }
+ }
+@@ -139,6 +140,7 @@ export type SidebarRootComponentProps =
+     | 'sidebar.panellist'
+     | 'sidebar.workspaces'
+     | 'sidebar.settings'
++    | 'sidebar.header.action'
+     | 'sidebar.footer.action'
+   >
+   & InjectFace<SidebarRootInjected> & PropsLocale<'sidebar'>
+diff --git a/packages/client/ui-sidebar/src/client/index.ts b/packages/client/ui-sidebar/src/client/index.ts
+index 38c384f697..9e0f025c3a 100644
+--- a/packages/client/ui-sidebar/src/client/index.ts
++++ b/packages/client/ui-sidebar/src/client/index.ts
+@@ -77,6 +77,7 @@ export function apply(ctx: ClientContext): void {
+       'sidebar.panellist': { kind: 'list', scope: 'root' },
+       'sidebar.workspaces': { kind: 'single', scope: 'root' },
+       'sidebar.settings': { kind: 'single', scope: 'root' },
++      'sidebar.header.action': { kind: 'list', scope: 'root' },
+       'sidebar.footer.action': { kind: 'list', scope: 'root' },
+     },
+     inject: injectProps,
+diff --git a/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap b/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
+index ba3e4d9540..9d6611e03a 100644
+--- a/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
++++ b/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
+@@ -46,6 +46,10 @@ exports[`sidebar shell snapshots > renders the collapsed rail after the crossfad
+         />
+       </button>
+     </div>
++    <div
++      data-slot="sidebar.header.action"
++      style="display: contents;"
++    />
+     <button
+       aria-label="New session"
+       class="newSession"
+@@ -155,6 +159,10 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
+           </span>
+         </span>
+       </button>
++      <div
++        data-slot="sidebar.header.action"
++        style="display: contents;"
++      />
+       <button
+         aria-label="Collapse sidebar"
+         class="iconButton toggle"
+@@ -285,6 +293,10 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
+           </span>
+         </span>
+       </button>
++      <div
++        data-slot="sidebar.header.action"
++        style="display: contents;"
++      />
+       <button
+         aria-label="收起侧边栏"
+         class="iconButton toggle"
+diff --git a/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx b/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
+index c7f890303f..de08b69c42 100644
+--- a/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
++++ b/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
+@@ -55,6 +55,7 @@ function mountShell({ collapsed = false, width = 300 }: { collapsed?: boolean; w
+       ) => {
+         if (key === 'sidebar.brand.mark') return brandMark
+         if (key === 'sidebar.brand.name') return brandName
++        if (key === 'sidebar.header.action') return <div data-testid="header-action-seat" data-wide={owner.wide} />
+         if (key === 'sidebar.settings') {
+           settingsOwner = owner
+           return <div data-testid="settings-seat" data-wide={owner.wide} />
+@@ -178,6 +179,7 @@ describe('SidebarRoot shell', () => {
+     b.rerender({})
+     expect(b.regionOwner().wide).toBe(false)
+     expect(b.footerActionOwner().wide).toBe(false)
++    expect(screen.getAllByTestId('header-action-seat')).toHaveLength(1)
+     expect(screen.getByTestId('region')).toBeTruthy()
+     b.regionOwner().expandSidebar()
+     expect(b.toggleSidebar).toHaveBeenCalledOnce()
+diff --git a/packages/client/ui-slots/src/index.ts b/packages/client/ui-slots/src/index.ts
+index 834b2a2b85..eeb6777e82 100644
+--- a/packages/client/ui-slots/src/index.ts
++++ b/packages/client/ui-slots/src/index.ts
+@@ -238,6 +238,12 @@ export interface RenderOpts<EntryKey extends string = string> {
+   fallback?: ReactNode
+   /** Type-erased runtime seat; PropsRenderSlots narrows or removes it per slot declaration. */
+   hookContext?: unknown
++  /**
++   * Bind the rendered subtree to one Session identity instead of the current
++   * selection (multi-pane rendering): every session-scoped slot inside
++   * resolves to this key, and changing the key remounts the subtree.
++   */
++  sessionKey?: string
+ }
+ 
+ /** renderSlotChain dispatch options. */
+@@ -321,6 +327,8 @@ export interface SessionAreaProps {
+   empty?: (() => ReactNode) | undefined
+   /** Session body; the framework remounts it per session identity. */
+   children: ReactNode
++  /** Render the area over this Session instead of the current selection (multi-pane rendering). */
++  sessionKey?: string | undefined
+ }
+ 
+ /**
+diff --git a/packages/client/ui-slots/src/renderer.ts b/packages/client/ui-slots/src/renderer.ts
+index c32d03b9b4..0e2caac06e 100644
+--- a/packages/client/ui-slots/src/renderer.ts
++++ b/packages/client/ui-slots/src/renderer.ts
+@@ -96,6 +96,15 @@ export interface SlotScopeAdapter {
+    * @returns the binding, or `undefined` when the identity is unavailable.
+    */
+   resolve(key: string): ScopedStandardSourceBinding | undefined
++  /**
++   * Observe one binding by scope identity (multi-pane rendering). The
++   * snapshot is that identity's current binding — `undefined` while it is
++   * unavailable — and listeners fire whenever bindings are rebuilt or the
++   * owning list changes, so a keyed subtree never holds a stale binding.
++   * @param key - scope identity.
++   * @returns an observable over the keyed binding.
++   */
++  observe?(key: string): HostObservable<ScopedStandardSourceBinding | undefined>
+   /**
+    * Render the scope owner's area seat over the current binding. The renderer
+    * binds this function to the standard `SessionProvider` prop without owning
+@@ -121,6 +130,12 @@ export interface RenderOpts {
+   fallback?: ReactNode
+   /** Opaque occurrence context consumed only by function-valued injected Hooks. */
+   hookContext?: unknown
++  /**
++   * Bind the rendered subtree to one Session identity instead of the current
++   * selection (multi-pane rendering): every session-scoped slot inside
++   * resolves to this key. Changing the key remounts the subtree.
++   */
++  sessionKey?: string
+ }
+ 
+ /** Host API the `ui-renderer` SlotRegistry presents to its React renderer. */
+diff --git a/packages/client/ui-subagent/tests/conversation-ui.client.spec.tsx b/packages/client/ui-subagent/tests/conversation-ui.client.spec.tsx
+index e026945747..bae3df81bd 100644
+--- a/packages/client/ui-subagent/tests/conversation-ui.client.spec.tsx
++++ b/packages/client/ui-subagent/tests/conversation-ui.client.spec.tsx
+@@ -63,6 +63,7 @@ function props(
+     current: PARENT, phase: 'ready',
+     subagentsByParent: value === undefined ? nested : { [PARENT]: value, ...nested },
+     jobsBySession: {},
++    staged: [],
+     currentAddress: undefined,
+   } satisfies SessionListState
+   function useSessions<T>(select: (snapshot: SessionListState) => T): T {
+diff --git a/packages/client/ui-theme/tests/appearance-row.client.spec.tsx b/packages/client/ui-theme/tests/appearance-row.client.spec.tsx
+index 5ad602ff05..e2caee4664 100644
+--- a/packages/client/ui-theme/tests/appearance-row.client.spec.tsx
++++ b/packages/client/ui-theme/tests/appearance-row.client.spec.tsx
+@@ -26,7 +26,7 @@ const COPY: Record<string, string> = {
+ 
+ function emptySessions() {
+   const store = createSnapshotStore<SessionListState>(
+-    { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined })
++    { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [] })
+   return bindSnapshotSelector(store)
+ }
+ function emptyWorkspaces() {
+diff --git a/packages/client/ui-theme/tests/font-size-row.client.spec.tsx b/packages/client/ui-theme/tests/font-size-row.client.spec.tsx
+index c917901cab..822e8d3a8e 100644
+--- a/packages/client/ui-theme/tests/font-size-row.client.spec.tsx
++++ b/packages/client/ui-theme/tests/font-size-row.client.spec.tsx
+@@ -28,7 +28,7 @@ const COPY: Record<string, string> = {
+ /** Empty global standard-kit hooks (the row reads neither). */
+ function emptySessions() {
+   const store = createSnapshotStore<SessionListState>(
+-    { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined })
++    { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [] })
+   return bindSnapshotSelector(store)
+ }
+ function emptyWorkspaces() {
+diff --git a/packages/client/ui-tool/tests/coverage-tails.client.spec.tsx b/packages/client/ui-tool/tests/coverage-tails.client.spec.tsx
+index 04e464d968..2d737734b6 100644
+--- a/packages/client/ui-tool/tests/coverage-tails.client.spec.tsx
++++ b/packages/client/ui-tool/tests/coverage-tails.client.spec.tsx
+@@ -30,6 +30,7 @@ function listStore() {
+     current: undefined,
+     phase: 'ready',
+     subagentsByParent: {}, jobsBySession: {},
++    staged: [],
+     currentAddress: undefined,
+   })
+ }
+diff --git a/packages/client/ui-tool/tests/diff-card.client.spec.tsx b/packages/client/ui-tool/tests/diff-card.client.spec.tsx
+index 1e8b2fdef6..4ba06abf77 100644
+--- a/packages/client/ui-tool/tests/diff-card.client.spec.tsx
++++ b/packages/client/ui-tool/tests/diff-card.client.spec.tsx
+@@ -204,6 +204,7 @@ describe('FileMutationRow diff card', () => {
+     current: SID,
+     phase: 'ready',
+     subagentsByParent: {}, jobsBySession: {},
++    staged: [],
+     currentAddress: undefined,
+   })
+ 
+diff --git a/packages/client/ui-tool/tests/read-card.client.spec.tsx b/packages/client/ui-tool/tests/read-card.client.spec.tsx
+index 21ace19335..9c5fecca28 100644
+--- a/packages/client/ui-tool/tests/read-card.client.spec.tsx
++++ b/packages/client/ui-tool/tests/read-card.client.spec.tsx
+@@ -208,6 +208,7 @@ describe('ReadRow keyed toolview', () => {
+     current: SID,
+     phase: 'ready',
+     subagentsByParent: {}, jobsBySession: {},
++    staged: [],
+     currentAddress: undefined,
+   })
+ 
+diff --git a/packages/client/ui-tool/tests/terminal-card.client.spec.tsx b/packages/client/ui-tool/tests/terminal-card.client.spec.tsx
+index 1cfe3b869c..3fdc83b6b0 100644
+--- a/packages/client/ui-tool/tests/terminal-card.client.spec.tsx
++++ b/packages/client/ui-tool/tests/terminal-card.client.spec.tsx
+@@ -409,6 +409,7 @@ describe('BashRow terminal card', () => {
+     current: undefined,
+     phase: 'ready',
+     subagentsByParent: {}, jobsBySession: {},
++    staged: [],
+     currentAddress: undefined,
+   })
+ 
+diff --git a/packages/client/ui-trajectory/tests/views.client.spec.tsx b/packages/client/ui-trajectory/tests/views.client.spec.tsx
+index 79a0e14b0e..7f13dfa54c 100644
+--- a/packages/client/ui-trajectory/tests/views.client.spec.tsx
++++ b/packages/client/ui-trajectory/tests/views.client.spec.tsx
+@@ -173,7 +173,7 @@ function standaloneDuration(): Pick<
+ /** Empty sessions-list hook; breadcrumbs therefore fall back to the raw id. */
+ function emptySessions() {
+   const store = createSnapshotStore<SessionListState>(
+-    { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined })
++    { ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [] })
+   return bindSnapshotSelector(store)
+ }
+ 
+diff --git a/packages/client/ui-user-questions/tests/plan-review-panel.client.spec.tsx b/packages/client/ui-user-questions/tests/plan-review-panel.client.spec.tsx
+index 238cc195fd..79d3a434a4 100644
+--- a/packages/client/ui-user-questions/tests/plan-review-panel.client.spec.tsx
++++ b/packages/client/ui-user-questions/tests/plan-review-panel.client.spec.tsx
+@@ -55,6 +55,7 @@ const sessionList = {
+   phase: 'ready' as const,
+   subagentsByParent: {},
+   jobsBySession: {},
++  staged: [],
+   currentAddress: undefined,
+ }
+ const attentionState: AttentionState = new Map()
+diff --git a/packages/client/ui-user-questions/tests/user-questions-composer.client.spec.tsx b/packages/client/ui-user-questions/tests/user-questions-composer.client.spec.tsx
+index 90848b3e9e..a7cd88e30f 100644
+--- a/packages/client/ui-user-questions/tests/user-questions-composer.client.spec.tsx
++++ b/packages/client/ui-user-questions/tests/user-questions-composer.client.spec.tsx
+@@ -54,6 +54,7 @@ const sessionList = {
+   phase: 'ready' as const,
+   subagentsByParent: {},
+   jobsBySession: {},
++  staged: [],
+   currentAddress: undefined,
+ }
+ const attentionState: AttentionState = new Map()
+diff --git a/packages/client/ui-workflow-run/tests/workflow-run.client.spec.tsx b/packages/client/ui-workflow-run/tests/workflow-run.client.spec.tsx
+index 4ef71e2a10..84b430dade 100644
+--- a/packages/client/ui-workflow-run/tests/workflow-run.client.spec.tsx
++++ b/packages/client/ui-workflow-run/tests/workflow-run.client.spec.tsx
+@@ -306,6 +306,7 @@ const listState = (overrides: Partial<SessionListState> = {}): SessionListState
+   phase: 'ready',
+   subagentsByParent: {},
+   jobsBySession: {},
++  staged: [],
+   currentAddress: undefined,
+   ...overrides,
+ })
+diff --git a/packages/client/ui-workspace/tests/tree.client.spec.ts b/packages/client/ui-workspace/tests/tree.client.spec.ts
+index 8f5326134b..701bda8ecc 100644
+--- a/packages/client/ui-workspace/tests/tree.client.spec.ts
++++ b/packages/client/ui-workspace/tests/tree.client.spec.ts
+@@ -20,7 +20,7 @@ const list = (...items: SessionSummary[]): SessionListState => ({
+   ids: items.map(item => item.id),
+   byId: Object.fromEntries(items.map(item => [item.id, item])),
+   current: undefined,
+-  phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
++  phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [],
+ })
+ const workspace = (id: string, sessionIds: string[], title = id): WorkspaceView => ({
+   workspaceId: wid(id), path: `/projects/${id}`, title,
+diff --git a/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx b/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx
+index b25b32e166..c0a5a27358 100644
+--- a/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx
++++ b/packages/client/ui-workspace/tests/workspace-browser.client.spec.tsx
+@@ -45,6 +45,7 @@ const sessionState = (items: readonly SessionSummary[], overrides: Partial<Sessi
+   current: undefined,
+   phase: 'ready',
+   subagentsByParent: {}, jobsBySession: {},
++  staged: [],
+   currentAddress: undefined,
+   ...overrides,
+ })
+diff --git a/packages/client/ui-workspace/tests/workspace-picker.client.spec.tsx b/packages/client/ui-workspace/tests/workspace-picker.client.spec.tsx
+index 3783a1d16a..5306422f76 100644
+--- a/packages/client/ui-workspace/tests/workspace-picker.client.spec.tsx
++++ b/packages/client/ui-workspace/tests/workspace-picker.client.spec.tsx
+@@ -35,7 +35,7 @@ function hook<T>(snapshot: T) {
+   return function select<S>(selector: (state: T) => S): S { return selector(snapshot) }
+ }
+ const sessions: SessionListState = {
+-  ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
++  ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [],
+ }
+ const noPendingInteraction: SessionPendingInteractionSnapshot = new Map()
+ const workspaceState = (items: readonly WorkspaceView[]): WorkspaceSnapshot => ({
+diff --git a/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts b/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
+index 52f106f0f0..ddbc779360 100644
+--- a/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
++++ b/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
+@@ -59,6 +59,7 @@ function sessionState(
+     phase,
+     subagentsByParent: {},
+     jobsBySession: {},
++    staged: [],
+     currentAddress: undefined,
+   }
+ }
+diff --git a/packages/core/agent-loop/src/agent.ts b/packages/core/agent-loop/src/agent.ts
+index 06e1f51b57..b046aaffd1 100644
+--- a/packages/core/agent-loop/src/agent.ts
++++ b/packages/core/agent-loop/src/agent.ts
+@@ -169,7 +169,8 @@ export class ReactLoopAgent implements Agent {
+       try {
+         return await job(maintenance.abort.signal)
+       } finally {
+-        this.setPhase({ kind: 'idle', lastTurn: maintenance.lastTurn })
++        // Maintenance may replay closed imported turns; the next live turn follows that log.
++        this.setPhase({ kind: 'idle', lastTurn: Math.max(maintenance.lastTurn, this.loopCtx.sessionProjections.stateOf(this.session, 'turnBoundary')?.lastTurn ?? 0) })
+         if (maintenance.wakeRequested && this.inbox.hasPending) this.wakeDriver()
+         done.resolve()
+       }
+diff --git a/packages/core/agent-loop/tests/loop.spec.ts b/packages/core/agent-loop/tests/loop.spec.ts
+index fb98a37e31..2a5f6464df 100644
+--- a/packages/core/agent-loop/tests/loop.spec.ts
++++ b/packages/core/agent-loop/tests/loop.spec.ts
+@@ -314,6 +314,21 @@ describe('agent loop', () => {
+     })).toThrow()
+   })
+ 
++  it('continues after closed history appended during maintenance', async () => {
++    const ctx = await harness(new MockAdapter([textResponse('new answer')]))
++    try {
++      const agent = await ctx.agentLoop.create(SessionId('imported-maintenance'), { provider: 'mock', model: 'mock' })
++      await agent.runMaintenance(async () => {
++        agent.session.append('turn/start', { turn: 1 })
++        agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
++      })
++      const idle = waitForIdle(ctx, agent)
++      send(agent, 'continue imported history')
++      await idle
++      expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/start').map(e => e.data.turn)).toEqual([1, 2])
++    } finally { await ctx.fiber.dispose() }
++  })
++
+   it('rejects concurrent maintenance while one job owns the Agent', async () => {
+     const ctx = await harness(new MockAdapter([textResponse('unused')]))
+     const agent = await ctx.agentLoop.create(SessionId('concurrent-maintenance'), {
+diff --git a/packages/core/system-prompt/src/index.ts b/packages/core/system-prompt/src/index.ts
+index d83cc4d216..9be9d723e3 100644
+--- a/packages/core/system-prompt/src/index.ts
++++ b/packages/core/system-prompt/src/index.ts
+@@ -16,6 +16,9 @@ declare module '@deepseek-ai/cordis' {
+   }
+ 
+   interface Events {
++    /** Await scoped resource readiness before sampling prompt and tool providers. @mode parallel */
++    'system-prompt/before-assemble'(this: Scoped<SystemPrompt>, context: AssembleContext): Promise<void>
++
+     /**
+      * Expert waterfall over the assembled sections, contexts, tools, and variables.
+      * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): scoped listeners
+@@ -551,6 +554,18 @@ export class SystemPrompt extends Service {
+   // Keep configuration failures on the declared asynchronous error path.
+   async assemble(context: AssembleContext = {}): Promise<PromptAssembly> {
+     const scope = context.scope
++    context.signal?.throwIfAborted()
++    try {
++      await this.ctx.parallel(scopeTarget(this, scope), 'system-prompt/before-assemble', context)
++    } catch (error) {
++      // Preserve actionable readiness failures instead of an empty AggregateError message.
++      if (error instanceof AggregateError) {
++        if (error.errors.length === 1) throw error.errors[0]
++        throw new AggregateError(error.errors, error.errors.map(e => e instanceof Error ? e.message : String(e)).join('; '))
++      }
++      throw error
++    }
++    context.signal?.throwIfAborted()
+     const scopeLayers = this.layers.chainLayers(scope)
+     const runtimeContextSuppressed = !this.layers.global.runtimeContextSuppressors.isEmpty()
+       || scopeLayers.some(layer => !layer.runtimeContextSuppressors.isEmpty())
+diff --git a/packages/test-support/client-runtime/src/sessions.ts b/packages/test-support/client-runtime/src/sessions.ts
+index 419e155af7..50a2e2099d 100644
+--- a/packages/test-support/client-runtime/src/sessions.ts
++++ b/packages/test-support/client-runtime/src/sessions.ts
+@@ -216,7 +216,7 @@ export class TestSessions implements ISessions {
+   constructor(private readonly stabilize: Stabilizer, private readonly rootCtx: Context) {
+     this.list = createSnapshotStore<SessionListState>({
+       ids: [], byId: {}, current: undefined, phase: 'ready',
+-      subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined,
++      subagentsByParent: {}, jobsBySession: {}, currentAddress: undefined, staged: [],
+     })
+   }
+ 
+@@ -471,6 +471,24 @@ export class TestSessions implements ISessions {
+   }
+ 
+   /** Clear the current selection (recorded; the production no-session flow). */
++  /** Multi-pane staging (pin/unpin) is recorded only; the fixture opens no windows. */
++  private readonly pinned = new Set<SessionId>()
++
++  pin(id: SessionId): void {
++    this.pinned.add(id)
++  }
++
++  unpin(id: SessionId): void {
++    this.pinned.delete(id)
++  }
++
++  get staged(): readonly SessionId[] {
++    const current = this.list.getSnapshot().current
++    const staged: SessionId[] = current === undefined ? [] : [current]
++    for (const id of this.pinned) if (!staged.includes(id)) staged.push(id)
++    return staged
++  }
++
+   clear(): void {
+     this.calls.push({ method: 'clear', args: [] })
+     this.list.update((draft) => {
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index a2773904c8..b4382dffb5 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -571,6 +571,9 @@ importers:
+       '@deepseek-ai/dsh-host-webserver':
+         specifier: workspace:^
+         version: link:../../packages/host/webserver
++      '@deepseek-ai/dsh-http-proxy':
++        specifier: workspace:^
++        version: link:../../packages/util/http-proxy
+       '@deepseek-ai/dsh-launch-environment':
+         specifier: workspace:^
+         version: link:../../packages/util/launch-environment
+diff --git a/apps/desktop/src/external-links.ts b/apps/desktop/src/external-links.ts
+new file mode 100644
+index 0000000000..93baed551c
+--- /dev/null
++++ b/apps/desktop/src/external-links.ts
+@@ -0,0 +1,8 @@
++/** Accept only ordinary website links for the system browser, never local or app schemes. */
++export function externalWebsite(value: string): string | undefined {
++  try {
++    const url = new URL(value)
++    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) return undefined
++    return url.href
++  } catch { return undefined }
++}
+diff --git a/apps/desktop/src/system-proxy.ts b/apps/desktop/src/system-proxy.ts
+new file mode 100644
+index 0000000000..3ccd184628
+--- /dev/null
++++ b/apps/desktop/src/system-proxy.ts
+@@ -0,0 +1,47 @@
++/** Bridge macOS's existing manual HTTP proxy to the bundled Node Host. */
++import { execFile } from 'node:child_process'
++import { promisify } from 'node:util'
++
++const run = promisify(execFile)
++const explicitProxyNames = ['http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']
++
++/** Preserve explicit launch overrides; inherit only enabled manual system proxies. */
++export function environmentWithSystemProxy(env: NodeJS.ProcessEnv, configuration: string): NodeJS.ProcessEnv {
++  if (explicitProxyNames.some(name => env[name] !== undefined)) return { ...env }
++  const value = (key: string): string | undefined =>
++    new RegExp('^\\s*' + key + '\\s*:\\s*(.*?)\\s*$', 'm').exec(configuration)?.[1]
++  // PAC rules are destination-specific; never turn them into a process-wide proxy.
++  if (value('ProxyAutoConfigEnable') === '1' || value('ProxyAutoDiscoveryEnable') === '1') return { ...env }
++  const result = { ...env }
++  for (const [prefix, name] of [['HTTP', 'HTTP_PROXY'], ['HTTPS', 'HTTPS_PROXY']] as const) {
++    if (value(prefix + 'Enable') !== '1') continue
++    const host = value(prefix + 'Proxy')
++    const port = Number(value(prefix + 'Port'))
++    if (!host || !/^[a-zA-Z0-9.:[\]-]+$/.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) continue
++    const authority = host.includes(':') && !host.startsWith('[') ? '[' + host + ']' : host
++    result[name] = 'http://' + authority + ':' + port
++  }
++  if (!result.HTTP_PROXY && !result.HTTPS_PROXY) return result
++  const exceptions = /ExceptionsList\s*:\s*<array>\s*{([^}]*)}/.exec(configuration)?.[1] ?? ''
++  // The shared policy supports host suffixes, not CIDR rules. Private IP literals
++  // remain blocked by WebFetch's existing validation, irrespective of proxy use.
++  const names = [...exceptions.matchAll(/^\s*\d+\s*:\s*(\S+)\s*$/gm)]
++    .map(match => match[1]!)
++    .filter(name => /^[a-zA-Z0-9.*_-]+$/.test(name))
++  const bypass = [env.no_proxy ?? env.NO_PROXY ?? '', ...names, 'localhost', '127.0.0.1', '::1'].filter(Boolean).join(',')
++  result.NO_PROXY = bypass
++  result.no_proxy = bypass
++  return result
++}
++
++/** Read-only, bounded discovery; unsupported systems keep their launch environment. */
++export async function desktopHostEnvironment(env: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> {
++  if (process.platform !== 'darwin' || explicitProxyNames.some(name => env[name] !== undefined)) return { ...env }
++  try {
++    const { stdout } = await run('/usr/sbin/scutil', ['--proxy'], { timeout: 2000, maxBuffer: 65536 })
++    return environmentWithSystemProxy(env, stdout)
++  } catch {
++    // Proxy discovery must not turn an otherwise healthy desktop into a startup failure.
++    return { ...env }
++  }
++}
+diff --git a/apps/desktop/tests/external-links.spec.ts b/apps/desktop/tests/external-links.spec.ts
+new file mode 100644
+index 0000000000..c09b211709
+--- /dev/null
++++ b/apps/desktop/tests/external-links.spec.ts
+@@ -0,0 +1,10 @@
++import { expect, it } from 'vitest'
++import { externalWebsite } from '../src/external-links.ts'
++it('accepts website destinations and retains query/fragment', () => {
++ expect(externalWebsite('https://skills.sh/a?q=b#c')).toBe('https://skills.sh/a?q=b#c')
++ expect(externalWebsite('http://example.com')).toBe('http://example.com/')
++})
++it('keeps local files and executable/custom schemes out of the browser handoff', () => {
++ for (const value of ['file:///tmp/a', 'javascript:alert(1)', 'data:text/html,a', 'dsh-app://app/', 'dsh-recovery://reset', 'https://a:b@example.com', 'not a URL'])
++  expect(externalWebsite(value)).toBeUndefined()
++})
+diff --git a/apps/desktop/tests/host-proxy-startup.spec.ts b/apps/desktop/tests/host-proxy-startup.spec.ts
+new file mode 100644
+index 0000000000..258f7358c0
+--- /dev/null
++++ b/apps/desktop/tests/host-proxy-startup.spec.ts
+@@ -0,0 +1,29 @@
++import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { expect, it, vi } from 'vitest'
++import { proxyRouteFor } from '@deepseek-ai/dsh-http-proxy'
++const state = vi.hoisted(() => ({ proxiedAtBoot: false }))
++vi.mock('@deepseek-ai/dsh-app-boot', () => ({
++ loadLayeredEnv: () => ({ get: (name: string) => name === 'HTTPS_PROXY' ? { value: 'http://127.0.0.1:7897', source: 'process' } : undefined }),
++ loadProfileDirectory: () => ({ layers: [], patches: [] }),
++ loadOverlayPatches: () => [], composeEntries: () => [],
++ boot: async () => {
++  const { proxyRouteFor } = await import('@deepseek-ai/dsh-http-proxy')
++  state.proxiedAtBoot = proxyRouteFor(new URL('https://github.com/')).proxied
++  throw new Error('fixture boot failure')
++ },
++}))
++it('real desktop boot enables proxy before plugins and restores it after failure', async () => {
++ const { runDesktopHost } = await import('../../desktop-host/src/index.ts')
++ const root = mkdtempSync(join(tmpdir(), 'desktop-proxy-'))
++ const pkg = join(root, 'node_modules/@deepseek-ai/dsh')
++ mkdirSync(pkg, { recursive: true })
++ writeFileSync(join(pkg, 'package.json'), '{}')
++ const before = proxyRouteFor(new URL('https://github.com/')).proxied
++ try {
++  await expect(runDesktopHost(root, join(root, 'profile'), async () => {})).rejects.toThrow('fixture boot failure')
++  expect(state.proxiedAtBoot).toBe(true)
++  expect(proxyRouteFor(new URL('https://github.com/')).proxied).toBe(before)
++ } finally { rmSync(root, { recursive: true, force: true }) }
++})
+diff --git a/apps/desktop/tests/system-proxy.spec.ts b/apps/desktop/tests/system-proxy.spec.ts
+new file mode 100644
+index 0000000000..de9d050b37
+--- /dev/null
++++ b/apps/desktop/tests/system-proxy.spec.ts
+@@ -0,0 +1,34 @@
++import { expect, it } from 'vitest'
++import { environmentWithSystemProxy } from '../src/system-proxy.ts'
++const config = `<dictionary> {
++ HTTPEnable : 1
++ HTTPPort : 7897
++ HTTPProxy : 127.0.0.1
++ HTTPSEnable : 1
++ HTTPSPort : 7897
++ HTTPSProxy : 127.0.0.1
++ ExceptionsList : <array> {
++  0 : localhost
++  1 : *.local
++  2 : 192.168.0.0/16
++ }
++}`
++it('passes enabled manual proxies to Node without mutating the launch environment', () => {
++ const env = { PATH: '/bin', NO_PROXY: 'example.com' }
++ const result = environmentWithSystemProxy(env, config)
++ expect(result.HTTP_PROXY).toBe('http://127.0.0.1:7897')
++ expect(result.HTTPS_PROXY).toBe(result.HTTP_PROXY)
++ expect(result.NO_PROXY).toContain('example.com')
++ expect(result.NO_PROXY).toContain('*.local')
++ expect(result.NO_PROXY).not.toContain('/16')
++ expect(env).toEqual({ PATH: '/bin', NO_PROXY: 'example.com' })
++})
++it('preserves explicit configuration including explicit empty values', () => {
++ for (const env of [{ https_proxy: 'http://other:80' }, { HTTP_PROXY: '' }, { ALL_PROXY: 'http://other:80' }])
++  expect(environmentWithSystemProxy(env, config)).toEqual(env)
++})
++it('does not guess for PAC, disabled or invalid proxies', () => {
++ expect(environmentWithSystemProxy({}, config + '\nProxyAutoConfigEnable : 1')).toEqual({})
++ expect(environmentWithSystemProxy({}, config.replaceAll('Enable : 1', 'Enable : 0'))).toEqual({})
++ expect(environmentWithSystemProxy({}, config.replaceAll('7897', '99999'))).toEqual({})
++})
+diff --git a/packages/client/ui-attachment/src/client/drop-files.ts b/packages/client/ui-attachment/src/client/drop-files.ts
+new file mode 100644
+index 0000000000..d91b4b80ca
+--- /dev/null
++++ b/packages/client/ui-attachment/src/client/drop-files.ts
+@@ -0,0 +1,19 @@
++/** Split native directory references from uploadable browser files synchronously during drop. */
++export function splitDroppedFiles(transfer: DataTransfer, pathForFile?: (file: File) => string) {
++  const files: File[] = []
++  const directories: string[] = []
++  const unsupported: string[] = []
++  const items = Array.from(transfer.items ?? []).filter(item => item.kind === 'file')
++  if (items.length === 0) return { files: Array.from(transfer.files), directories, unsupported }
++  for (const item of items) {
++    const entry = item.webkitGetAsEntry?.()
++    const file = item.getAsFile()
++    if (entry?.isDirectory) {
++      let path = ''
++      try { if (file) path = pathForFile?.(file) ?? '' } catch { /* Never upload a directory as fallback. */ }
++      if (path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)) directories.push(path)
++      else unsupported.push(entry.name)
++    } else if (file) files.push(file)
++  }
++  return { files, directories: [...new Set(directories)], unsupported }
++}
+diff --git a/packages/client/ui-attachment/tests/drop-files.client.spec.ts b/packages/client/ui-attachment/tests/drop-files.client.spec.ts
+new file mode 100644
+index 0000000000..40a3eeac5f
+--- /dev/null
++++ b/packages/client/ui-attachment/tests/drop-files.client.spec.ts
+@@ -0,0 +1,30 @@
++// @vitest-environment jsdom
++import { expect, it, vi } from 'vitest'
++import { splitDroppedFiles } from '../src/client/drop-files.ts'
++const folder = new File([], 'skills')
++const text = new File(['hello'], 'notes.txt')
++function transfer() {
++ return { files: [folder, text], items: [
++  { kind: 'file', getAsFile: () => folder, webkitGetAsEntry: () => ({ isDirectory: true, name: 'skills' }) },
++  { kind: 'file', getAsFile: () => text, webkitGetAsEntry: () => ({ isDirectory: false }) },
++ ] } as unknown as DataTransfer
++}
++it('references folders and uploads normal files in a mixed drop', () => {
++ const bridge = vi.fn(() => '/Users/test/my skills')
++ const result = splitDroppedFiles(transfer(), bridge)
++ expect(result.directories).toEqual(['/Users/test/my skills'])
++ expect(result.files).toEqual([text])
++ expect(result.unsupported).toEqual([])
++ expect(bridge).toHaveBeenCalledWith(folder)
++})
++it('does not upload directory placeholders if a bridge is missing or fails', () => {
++ for (const bridge of [undefined, () => { throw new Error('unavailable') }, () => '']) {
++  const result = splitDroppedFiles(transfer(), bridge)
++  expect(result.files).toEqual([text])
++  expect(result.directories).toEqual([])
++  expect(result.unsupported).toEqual(['skills'])
++ }
++})
++it('retains ordinary-file intake when the browser has no entry API', () => {
++ expect(splitDroppedFiles({ files: [text] } as unknown as DataTransfer).files).toEqual([text])
++})
+diff --git a/packages/client/ui-input-trigger/src/client/useMenuMaxHeight.ts b/packages/client/ui-input-trigger/src/client/useMenuMaxHeight.ts
+new file mode 100644
+index 0000000000..d4b2c6060f
+--- /dev/null
++++ b/packages/client/ui-input-trigger/src/client/useMenuMaxHeight.ts
+@@ -0,0 +1,37 @@
++import { useLayoutEffect, useState } from 'react'
++import type { RefObject } from 'react'
++
++/** Fit above the composer, inside both the window and clipped card ancestors. */
++export function menuMaxHeight(element: HTMLElement, cap: number): number {
++  let top = (window.visualViewport?.offsetTop ?? 0) + 12
++  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
++    const style = getComputedStyle(parent)
++    if (/(auto|scroll|hidden|clip)/.test(`${style.overflowY} ${style.overflow}`)) {
++      top = Math.max(top, parent.getBoundingClientRect().top + parent.clientTop + 8)
++    }
++  }
++  return Math.min(cap, Math.max(0, element.getBoundingClientRect().bottom - top))
++}
++
++export function useMenuMaxHeight(ref: RefObject<HTMLElement>, cap: number, signal: unknown): number {
++  const [height, setHeight] = useState(cap)
++  useLayoutEffect(() => {
++    const element = ref.current
++    if (!element) return
++    const fit = () => { setHeight(menuMaxHeight(element, cap)) }
++    fit()
++    // Watch composer/card size changes, without polling or observing menu size.
++    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(fit)
++    for (let parent = element.parentElement; parent; parent = parent.parentElement) observer?.observe(parent)
++    window.addEventListener('resize', fit)
++    window.addEventListener('scroll', fit, true)
++    window.visualViewport?.addEventListener('resize', fit)
++    return () => {
++      observer?.disconnect()
++      window.removeEventListener('resize', fit)
++      window.removeEventListener('scroll', fit, true)
++      window.visualViewport?.removeEventListener('resize', fit)
++    }
++  }, [ref, cap, signal])
++  return height
++}
+diff --git a/packages/client/ui-input-trigger/tests/menu-height.client.spec.tsx b/packages/client/ui-input-trigger/tests/menu-height.client.spec.tsx
+new file mode 100644
+index 0000000000..ef0c537770
+--- /dev/null
++++ b/packages/client/ui-input-trigger/tests/menu-height.client.spec.tsx
+@@ -0,0 +1,37 @@
++// @vitest-environment jsdom
++import { afterEach, expect, it, vi } from 'vitest'
++import { cleanup, render, act } from '@testing-library/react'
++import { useRef } from 'react'
++import { menuMaxHeight, useMenuMaxHeight } from '../src/client/useMenuMaxHeight.ts'
++afterEach(() => { cleanup(); document.body.innerHTML = ''; vi.restoreAllMocks(); vi.unstubAllGlobals() })
++it.each(['hidden', 'auto', 'scroll', 'clip'])('fits within a card with overflow %s rather than only the window', overflow => {
++  const card = document.createElement('div'); card.style.overflowY = overflow
++  const menu = card.appendChild(document.createElement('div')); document.body.append(card)
++  vi.spyOn(card, 'getBoundingClientRect').mockReturnValue({ top: 80 } as DOMRect)
++  vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue({ bottom: 400 } as DOMRect)
++  expect(menuMaxHeight(menu, 400)).toBe(312)
++  vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue({ bottom: 70 } as DOMRect)
++  expect(menuMaxHeight(menu, 400)).toBe(0)
++})
++it('respects nested clipping, but ignores an unclipped composer', () => {
++  const outer = document.createElement('div'); outer.style.overflow = 'hidden'
++  const inner = outer.appendChild(document.createElement('div')); inner.style.overflow = 'auto'
++  const composer = inner.appendChild(document.createElement('div'))
++  const menu = composer.appendChild(document.createElement('div')); document.body.append(outer)
++  for (const [element, top] of [[outer, 40], [inner, 90], [composer, 400]] as const) vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({ top } as DOMRect)
++  vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue({ bottom: 400 } as DOMRect)
++  expect(menuMaxHeight(menu, 400)).toBe(302)
++})
++it('refits on container resize and disconnects observers on close', () => {
++  let resized: () => void = () => {}
++  const disconnect = vi.fn()
++  vi.stubGlobal('ResizeObserver', class { constructor(fn: () => void) { resized = fn } observe() {} disconnect = disconnect })
++  let top = 80
++  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function(this: Element) { return { top: this.id === 'card' ? top : 0, bottom: 400 } as DOMRect })
++  function Fixture() { const ref = useRef<HTMLDivElement>(null); const height = useMenuMaxHeight(ref, 400, true); return <div id="card" style={{ overflow: 'hidden' }}><div ref={ref} data-testid="menu" style={{ maxHeight: height }} /></div> }
++  const view = render(<Fixture />)
++  expect(view.getByTestId('menu').style.maxHeight).toBe('312px')
++  top = 200; act(() => { resized() })
++  expect(view.getByTestId('menu').style.maxHeight).toBe('192px')
++  view.unmount(); expect(disconnect).toHaveBeenCalled()
++})
+diff --git a/packages/client/ui-primitives/tests/file-mention-menu.client.spec.tsx b/packages/client/ui-primitives/tests/file-mention-menu.client.spec.tsx
+new file mode 100644
+index 0000000000..1945b34cc3
+--- /dev/null
++++ b/packages/client/ui-primitives/tests/file-mention-menu.client.spec.tsx
+@@ -0,0 +1,30 @@
++// @vitest-environment jsdom
++import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
++import { afterEach, expect, it, vi } from 'vitest'
++import { MarkdownText } from './markdown-test-components.tsx'
++afterEach(cleanup)
++it('keeps left-click preview and reveals only after explicit context-menu selection', async () => {
++  const open = vi.fn()
++  const reveal = vi.fn().mockResolvedValue(undefined)
++  const view = render(<MarkdownText text={'`report.md`'} fileMentions={{ resolve: () => ({
++    open, reveal, title: '/work/report.md', label: 'Preview', revealLabel: 'Show in Finder', revealError: 'Try again',
++  }) }} />)
++  fireEvent.click(view.getByRole('button', { name: 'Preview' }))
++  expect(open).toHaveBeenCalledTimes(1)
++  fireEvent.contextMenu(view.getByRole('button', { name: 'Preview' }))
++  expect(reveal).not.toHaveBeenCalled()
++  fireEvent.click(view.getByRole('menuitem', { name: 'Show in Finder' }))
++  await waitFor(() => expect(reveal).toHaveBeenCalledTimes(1))
++})
++it('reports native failure and allows retry', async () => {
++  const reveal = vi.fn().mockRejectedValueOnce(new Error('missing')).mockResolvedValue(undefined)
++  const view = render(<MarkdownText text={'`report.md`'} fileMentions={{ resolve: () => ({
++    open: () => {}, reveal, title: '/work/report.md', label: 'Preview', revealLabel: 'Show in Finder', revealError: 'Try again',
++  }) }} />)
++  fireEvent.contextMenu(view.getByRole('button', { name: 'Preview' }))
++  fireEvent.click(view.getByRole('menuitem', { name: 'Show in Finder' }))
++  await waitFor(() => expect(view.getByRole('alert').textContent).toBe('Try again'))
++  fireEvent.contextMenu(view.getByRole('button', { name: 'Preview' }))
++  fireEvent.click(view.getByRole('menuitem', { name: 'Show in Finder' }))
++  await waitFor(() => expect(view.queryByRole('alert')).toBeNull())
++})

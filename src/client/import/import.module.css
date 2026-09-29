@@ -1,0 +1,33 @@
+.modal { width: min(960px, calc(100vw - 40px)); padding: 0; border-radius: 18px; color: var(--dsw-alias-label-primary, #26282d); }
+.panel { display: flex; flex-direction: column; max-height: calc(100vh - 56px); font-size: 13px; background: var(--dsw-alias-bg-layer-2, white); }
+.panel button { cursor: pointer; border: 1px solid var(--dsw-alias-border-main, #e2e4e8); background: transparent; color: inherit; border-radius: 9px; padding: 8px 12px; font: inherit; }
+.panel button:disabled { opacity: .45; cursor: default; }
+.panel button:focus-visible, .panel input:focus-visible { outline: 2px solid #6589ef; outline-offset: 2px; }
+.panel header { display: flex; justify-content: space-between; align-items: flex-start; padding: 24px 26px 20px; }
+.panel h2 { font-size: 20px; margin: 0 0 8px; font-weight: 600; }
+.panel p { margin: 0; }
+.panel header p, .subtle, .panel small { color: var(--dsw-alias-label-secondary, #858991); }
+.panel header button { border: 0; font-size: 22px; line-height: 20px; }
+.workspace { display: flex; gap: 12px; align-items: center; margin: 0 26px 20px; padding: 11px 14px; border-radius: 9px; background: var(--dsw-alias-bg-layer-1, #f5f6f8); }
+.workspace span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; font-size: 12px; color: var(--dsw-alias-label-secondary, #858991); }
+.workspace strong, .workspace small { flex-shrink: 0; }
+.columns { display: grid; grid-template-columns: 43% 57%; height: min(445px, 54vh); min-height: 240px; border-block: 1px solid #8882; }
+.listPane { display: flex; flex-direction: column; padding: 16px; min-height: 0; border-right: 1px solid #8882; }
+.listPane input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #8883; border-radius: 9px; background: transparent; color: inherit; font: inherit; }
+.filters { display: flex; gap: 6px; margin: 12px 0; }
+.filters button { padding: 6px 10px; border: 0; font-size: 12px; }
+.filters button[aria-pressed=true] { background: #7397ee20; color: #527ad7; }
+.listMeta, .pagination { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--dsw-alias-label-secondary, #858991); }
+.listMeta button { padding: 4px; border: 0; font-size: 11px; }
+.list { flex: 1; min-height: 0; overflow: auto; margin-top: 8px; contain: layout style; }
+.list .row { width: 100%; display: flex; align-items: flex-start; gap: 10px; text-align: left; border: 0; padding: 13px 9px; margin-bottom: 3px; }
+.row:hover { background: #8881; }.row[aria-pressed=true] { background: #7397ee15; }
+.sourceIcon { font-size: 21px; color: #8b939f; }.rowText { display: flex; flex-direction: column; flex: 1; gap: 7px; min-width: 0; }
+.rowText strong, .rowText > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.rowText > span { font-size: 12px; color: var(--dsw-alias-label-secondary, #858991); }.rowText small { font-size: 10px; }
+.pagination { padding-top: 10px; }.pagination button { font-size: 11px; padding: 5px 8px; }
+.preview { padding: 22px 24px; display: flex; flex-direction: column; overflow: auto; min-height: 0; min-width: 0; }.preview > * { flex-shrink: 0; }.preview h3 { margin: 0 0 9px; font-size: 16px; overflow-wrap: anywhere; }.subtle { font-size: 11px; line-height: 1.7; }
+.preview .messages { margin-top: 16px; overflow: auto; min-height: 0; flex: 1; }.messages article { margin-bottom: 20px; }.messages p { margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }.user p { background: #7397ee14; border-radius: 12px; padding: 12px; }.assistant p { padding: 0 3px; }
+.empty { text-align: center; padding: 65px 12px; color: var(--dsw-alias-label-secondary, #858991); line-height: 1.8; }
+.panel footer { display: flex; gap: 10px; align-items: center; padding: 20px 26px; }.panel footer > div { flex: 1; }.panel footer small { display: block; margin-top: 6px; font-size: 10px; line-height: 1.5; }.panel footer button { flex-shrink: 0; }.panel .primary { background: #527fe4; color: white; border-color: #527fe4; }
+.panel .error { color: #cd4949; font-size: 12px; padding: 9px 0; }.warning { font-size: 11px; color: #a78036; }
+@media(max-width: 650px) { .columns { grid-template-columns: 1fr 1fr; }.panel footer { flex-wrap: wrap; padding: 14px; }.panel footer > div { flex-basis: 100%; }.workspace span { display: none; }.workspace { justify-content: space-between; }.preview { padding: 14px; }.filters { gap: 0; }.filters button { padding: 5px; } }

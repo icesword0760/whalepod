@@ -1,0 +1,12 @@
+node_modules/
+lib/
+dist/
+.artifacts/
+.worktrees*/
+.dev-env
+.env
+.env.*
+coverage/
+*.log
+.DS_Store
+.runtime/

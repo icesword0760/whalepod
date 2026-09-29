@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    // 宿主跑在 Node 里（`src/control/revision.ts` 用 node:crypto 做 sha256）。
+    // 客户端程序 tsconfig.client.json 继承时会被它自己的 include 限定在
+    // src/client + src/org，那里不碰 node: 模块。
+    "types": ["node"]
+  },
+  // 宿主程序：src 减去 src/client。
+  //
+  // 必须拆成两个程序，因为宿主与客户端各自往 cordis 的 `Context` 上augment
+  // 了同名不同型的 `sessions`（宿主 `@deepseek-ai/dsh-session` 是
+  // `SessionStore`，客户端 `dsh-api-session-controller/client` 是 `ISessions`）。
+  // S7 把控制面挂进宿主入口之前，两份声明从不出现在同一次编译里；挂上之后
+  // 宿主那份会把客户端代码脚下的类型换掉，`ctx.sessions.binding(...)` 之类
+  // 全部报错。DSH 自己也是靠分程序避开这件事的（tsconfig.client.json）。
+  //
+  // 别把这两份合回一份。
+  "include": ["src"],
+  "exclude": ["src/client"]
+}

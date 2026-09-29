@@ -1,0 +1,157 @@
+.frame {
+  position: relative; /* anchors the drag handles, which straddle column borders */
+  display: grid;
+  grid-template-rows: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-base);
+  /* Collapse/expand animates the tracks on the deepsuite sider curve
+     (--ds-ease-in-out / --ds-transition-duration-slow, ui-theme base.css). */
+  transition: grid-template-columns var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+/* Dragging writes widths at pointer cadence; easing them would detach the
+   column from the handle. */
+.frame[data-dragging] {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame {
+    transition: none;
+  }
+}
+
+.sidebarCol {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--dsw-specific-sidebar-fill);
+  border-right: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+/* DSH 自己的侧栏在顶部放了一颗「新会话」按钮（`ui-sidebar` 的 `newSession`，
+   是 `[data-slot='sidebar']` 根下唯一的直接 button 子节点）。在本布局里它是多余
+   且有歧义的：会话是在某个页签的卡片带子里建的（带子右上角那颗「新会话」），
+   卡片归属由事项/页签决定；侧栏顶部一个不知道该落到哪个页签的「新会话」没有
+   正确答案。码头的侧栏顶栏放的是「新建工作区」（`TaskSidebar.tsx:191-196`），
+   本插件把那颗按钮补在自己的工作区座位顶部（`workbench.module.css` 的
+   `.newWorkspace`），位置与它一致。
+
+   选的是结构位置而不是 DSH 的哈希类名：类名是 CSS Module 编译出来的，不对外
+   稳定；「侧栏根下的直接 button 子节点」是它的 DOM 契约。 */
+.sidebarCol :global([data-slot='sidebar'] > * > button) {
+  display: none;
+}
+
+.centerCol {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detailsCol {
+  min-width: 0;
+  overflow: hidden;
+  border-left: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+/* The details subtree stays mounted at zero width, so its border must not paint
+   a 1px seam. The collapsed sidebar instead retains a bordered compact rail. */
+.frame[data-details-collapsed] .detailsCol {
+  border-left: none;
+}
+
+/* Drag handles are frame children (columns clip overflow): an 8px hit strip
+   centered on the column border via inline left, above column content. Details
+   adds a visible 12x32 pill at vertical center; sidebar keeps only the hit strip. */
+.handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  margin-left: -4px;
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+  /* Rides the same curve as the tracks so the pill stays on the moving
+     border during collapse/expand; paused while dragging (frame rule). */
+  transition: left var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.frame[data-dragging] .handle {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .handle {
+    transition: none;
+  }
+}
+
+.handle[data-side='details']::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 32px;
+  border-radius: 10px;
+  box-sizing: border-box;
+  background: var(--dsw-alias-button-floating-fill);
+  border: 0.5px solid var(--dsw-alias-border-l2-darkmode-thin);
+  /* Hover affordance: the details pill hides until the pointer is over its
+     column, the strip itself, or a drag. */
+  opacity: 0;
+  transition:
+    opacity var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    background var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.detailsCol:hover ~ .handle[data-side='details']::after,
+.handle[data-side='details']:hover::after,
+.handle[data-side='details'][data-dragging='true']::after {
+  opacity: 1;
+}
+
+.handle[data-side='details']:hover::after,
+.handle[data-side='details'][data-dragging='true']::after {
+  background: var(--dsw-alias-button-floating-hover);
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.overlayLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.overlayLayer > * {
+  pointer-events: auto;
+}
+
+/* Only the native desktop bridge opts in; browser and stock layout stay intact. */
+.frame[data-integrated-chrome] .sidebarCol { padding-top: 28px; box-sizing: border-box; }
+.frame[data-integrated-chrome][data-sidebar-collapsed] .centerCol { padding-top: 28px; }
+.desktopChrome {
+  position: absolute; top: 0; left: 0; height: 28px; z-index: 8;
+  display: flex; align-items: center; justify-content: flex-end;
+  box-sizing: border-box; padding: 0 10px 0 78px;
+  -webkit-app-region: drag; user-select: none;
+  background: var(--dsw-specific-sidebar-fill);
+}
+.desktopChrome button {
+  -webkit-app-region: no-drag; display: grid; place-items: center;
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px;
+  background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer;
+}
+.desktopChrome button:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.desktopChrome button:focus-visible { outline: 2px solid #668bea; outline-offset: 2px; }
+
+/* DSH 0.1.5's logoRow reserves 60px + 8px below. Native controls already
+   have their own inset, so compact that row only in this desktop layout. */
+.frame[data-integrated-chrome]:not([data-sidebar-collapsed]) .sidebarCol [class*="logoRow"] {
+  height: 38px; padding-top: 4px; padding-bottom: 4px; margin-bottom: 2px;
+}

@@ -1,0 +1,24 @@
+/* Remove dialog's cascade-scope choice (仅本卡 / 含所有子代). */
+
+.removeBody {
+  margin: 0 0 10px;
+}
+
+.removeChoice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+/* What happens to the descendants under this choice (码头 RemoveNodeDialog's
+   own per-choice `<em>` description): secondary weight, so the choice itself
+   still reads first. */
+.removeHint {
+  font-size: 12px;
+  font-style: normal;
+  color: var(--dsw-alias-label-tertiary);
+}

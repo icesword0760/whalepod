@@ -1,0 +1,11 @@
+{
+  // 客户端程序。见 tsconfig.json 里的说明：与宿主分开编译，两边的
+  // `Context.sessions` augmentation 才不会互相覆盖。
+  //
+  // `src/*.d.ts` 两份环境声明（css-modules、client-build-environment）必须
+  // 显式列进来——它们躺在 src 根上，不在 src/client 里，而按目录 include
+  // 会把它们漏掉，于是每个 import css from './x.module.css' 都会报找不到模块。
+  "extends": "./tsconfig.json",
+  "include": ["src/client", "src/org", "src/*.d.ts"],
+  "exclude": []
+}

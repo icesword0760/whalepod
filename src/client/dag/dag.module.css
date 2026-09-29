@@ -1,0 +1,711 @@
+/* S4 session-relationship overlay (码头
+   `apps/desktop/src/renderer/src/dag/dag.css`, ported shape-for-shape but
+   re-coloured onto DSH alias tokens — 码头's stylesheet hard-codes a dark
+   palette plus a `.light-theme` duplicate, which DSH's own light/dark tokens
+   make unnecessary and wrong to copy).
+
+   FILE LAYOUT — sections 3-5 are reserved insertion points for the tasks that
+   follow, so nobody has to guess where their rules belong:
+
+     1. 节点卡（Task 9）
+     2. 远层聚合卡（Task 9）
+     3. 画布 / 边 / 工具栏（Task 10 在此追加）
+     4. 搜索框（Task 11 在此追加）
+     5. 浮层壳（Task 12 在此追加）
+     6. 跨切面：缩放降级闸门 + prefers-reduced-motion（保持在文件末尾）
+
+   TWO RULES THAT BIND EVERY SECTION:
+
+   - **Every `border-radius: 50%` or `999px` MUST carry `corner-shape: round`
+     in the SAME declaration.** The app ships a global
+     `* { corner-shape: superellipse(1.5) }` (ui-theme `corner-shape.css`)
+     which otherwise squashes dots and pills into squircles. No CI enforces
+     this — `tests/dag-node-card.client.spec.tsx` reads this file's source and
+     IS the check. Note that this repo's OTHER stylesheets predate the rule and
+     do not follow it; do not copy their dot declarations.
+   - **Colours ride `--dsw-*` tokens only.** No hex, no `rgb()`, no
+     `.light-theme` duplicate — the tokens already flip with the theme. Same
+     spec assertion enforces it. */
+
+/* ============================================================
+   1. 节点卡（DagNodeCard.tsx）
+   ============================================================ */
+
+/* Absolutely positioned by the canvas: `left/top/width/height` arrive inline
+   from `dag/layout.ts`, so nothing here may set size — the card is a fixed
+   frame whose height was already computed from the wrapped title. */
+.card {
+  position: absolute;
+  box-sizing: border-box;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  overflow: hidden;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-panel);
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+
+.card:hover {
+  border-color: var(--dsw-alias-border-l2);
+  transform: translateY(-2px);
+}
+
+.card.isFocused {
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-brand-primary), var(--dsw-elevation-prominent);
+}
+
+/* Unread halo (码头 `dag.css:39-43`'s `has-notification`), on the same accent
+   token the carousel card's own notice ring uses (`carousel.module.css`
+   `.card.hasRing`) so one session reads identically on both surfaces. */
+.card.hasNotice {
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 32%, transparent),
+    var(--dsw-elevation-panel);
+}
+
+/* The arrival pulse, twice, then quiet — 码头 `dag.css:42-43`. */
+.card.hasNotice::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  border: 2px solid var(--dsw-alias-state-business-primary);
+  border-radius: 11px;
+  pointer-events: none;
+  animation: dagNoticeRing 720ms cubic-bezier(.16, 1, .3, 1) 2;
+}
+
+.notice {
+  position: absolute;
+  z-index: 4;
+  top: 8px;
+  right: 8px;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid var(--dsw-alias-bg-layer-1);
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--dsw-alias-state-business-primary);
+  animation: dagNoticeDot 720ms cubic-bezier(.16, 1, .3, 1) 2;
+}
+
+@keyframes dagNoticeRing {
+  0% { opacity: .5; }
+  55% { opacity: 1; }
+  100% { opacity: .9; }
+}
+
+@keyframes dagNoticeDot {
+  0% { opacity: .5; transform: scale(.7); }
+  55% { opacity: 1; transform: scale(1.2); }
+  100% { opacity: 1; transform: none; }
+}
+
+.topRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* Idle has no `StateDot` — 「有事才亮」 (`workbench/status.ts`) — so the row
+   keeps its rhythm with a neutral dot built to `StateDot`'s own two-layer
+   geometry (10px halo at 10% opacity, 60% solid core). */
+.idleDot {
+  position: relative;
+  flex: none;
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: color-mix(in srgb, var(--dsw-alias-label-tertiary) 10%, transparent);
+}
+
+.idleDot::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--dsw-alias-label-tertiary);
+}
+
+/* `overflow-wrap: anywhere` + `white-space: normal` is load-bearing, not
+   cosmetic: `dag/layout.ts`'s `nodeHeight` sizes the card from exactly this
+   wrapping behaviour (码头 `dag.css:54`). */
+.title {
+  overflow: visible;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.path {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* D-3's body: the last turn's assistant summary, clamped to three lines. The
+   projection already collapses its text to ONE line
+   (`session-turn-outline/src/projection.ts`), so the three lines are purely
+   this clamp wrapping a long single line — the fixed height is what keeps the
+   meta line pinned to the same place on every card.
+
+   THE HEIGHT AND THE CLAMP MUST AGREE: 3 × 11px × 1.5 = 49.5px of text plus
+   6px padding top and bottom = 61.5px, hence 62. 码头's own box is 48px
+   (`dag.css:57`) because its type is 9px/1.5 and it clips rather than clamps;
+   copying that number here would silently show two lines and cut the third
+   mid-stroke. `tests/dag-node-card.client.spec.tsx` re-does this arithmetic,
+   so changing the type scale without changing the height fails.
+
+   The card frame has room: 12 + 12 (top row) + 5 + 18 (one title line) + 5 +
+   14 (path) + 5 + 62 + 5 + 14 (meta) + 12 = 164 ≤ `nodeHeight`'s 174px
+   baseline, and a second title line raises both sides by 18 together. */
+.preview {
+  display: -webkit-box;
+  height: 62px;
+  box-sizing: border-box;
+  overflow: hidden;
+  margin: 0;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.preview.isEmpty {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.meta {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+/* ============================================================
+   2. 远层聚合卡（DagAggregateCard.tsx）
+   ============================================================ */
+
+/* Dashed, so a fold never reads as a session (码头 `dag.css:60`). Its
+   left/top/width/height are copied from the member card whose place it takes,
+   which is why the stack looks anchored rather than parked. */
+.aggregate {
+  position: absolute;
+  box-sizing: border-box;
+  display: grid;
+  align-content: center;
+  gap: 9px;
+  overflow: hidden;
+  margin: 0;
+  padding: 16px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-elevation-panel);
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 220ms ease, border-color 220ms ease;
+}
+
+.aggregate:hover {
+  border-color: var(--dsw-alias-border-l1);
+  transform: translateY(-2px);
+}
+
+.aggregateEyebrow {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+
+.aggregateCount {
+  color: var(--dsw-alias-label-primary);
+  font-size: 15px;
+}
+
+.aggregateRange {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.aggregateCounts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.countItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.countDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--dsw-alias-label-tertiary);
+}
+
+/* 与节点卡上 `StateDot` 的三色同档，好让一张聚合卡和它折起来的成员说同一种
+   语言。running 这一档必须直接走 static-450：DSH 没有对应的 alias token，
+   `state-business-primary` 是 500 档（深色主题下还会变成 400），不是这一档
+   ——`StateDot.module.css:1-5` 自己就是这么绕过去的，此处照它。
+   （S4 审查 I-2：这段注释原先声称三色与 StateDot 相同，而 running 那档实际
+   差一档，深浅两个主题下都对不上；错的注释比错的颜色更坏，它会让下一个人
+   不去核对。）*/
+.countDot.running {
+  background: var(--dsw-static-deepseek-450);
+}
+
+.countDot.waiting {
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.countDot.done {
+  background: var(--dsw-alias-state-success-primary);
+}
+
+/* Border priority: waiting > running > done. 码头's chain is
+   error > needs-input > running (`dag.css:70-72`); DSH's `SessionSummary`
+   carries no failure bit, so the top rung is dropped and 「已完成」 takes the
+   bottom one. The component hangs every matching class and the `:not()` chain
+   decides, exactly as 码头 does. */
+.aggregate.hasWaiting {
+  border-color: var(--dsw-alias-state-warn-primary);
+}
+
+.aggregate.hasRunning:not(.hasWaiting) {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.aggregate.hasDone:not(.hasWaiting):not(.hasRunning) {
+  border-color: var(--dsw-alias-state-success-primary);
+}
+
+/* ============================================================
+   3. 画布 / 边 / 工具栏（DagCanvas.tsx）
+   ============================================================ */
+
+/* 码头 `dag.css:9-10`, re-coloured onto DSH tokens. The dot grid is what makes
+   panning legible — without a textured ground a drag on empty space looks like
+   nothing is happening. `touch-action: none` is load-bearing: it stops the
+   browser from claiming the pointer sequence for a scroll/pinch before the
+   drag handler ever sees a `pointermove`. */
+.canvas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--dsw-alias-bg-base);
+  background-image: radial-gradient(circle at 1px 1px, var(--dsw-alias-border-l3) 1px, transparent 0);
+  background-size: 22px 22px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.canvas:active {
+  cursor: grabbing;
+}
+
+/* `transform-origin: 0 0` is not cosmetic: `dag/viewport.ts` does all of its
+   arithmetic as `screen = world × scale + offset`, which is only true when the
+   scale pivots on the world origin. Leave it at the CSS default (`50% 50%`) and
+   every card lands somewhere plausible-looking and wrong, edges included. */
+.world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* 码头 `dag.css:12`. Applied imperatively for the length of one `focusNode`
+   glide (see `DagCanvas.tsx`'s `focusNode`) so that dragging and wheel panning
+   — which must track the pointer exactly — stay untransitioned. */
+.canvas.isAnimating .world {
+  transition: transform 240ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  transform: translate(-50%, -50%);
+}
+
+/* 码头 `dag.css:13-14`'s floating bar, minus its `-webkit-app-region: drag`
+   handles: those exist only to move an Electron frameless window, which this
+   plugin's overlay is not. The bar itself is click-through so a drag started on
+   the gap between its two groups still pans the canvas. */
+.toolbar {
+  position: absolute;
+  z-index: 30;
+  top: 14px;
+  right: 16px;
+  left: 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.toolbar > * {
+  pointer-events: auto;
+}
+
+/* `margin-left: auto` rather than leaning on the bar's `space-between`: the
+   search box is an optional slot (`DagCanvas.tsx`'s `renderSearch`), and with
+   `space-between` alone a toolbar that has no search box would drag the zoom
+   group and the legend over to the left edge. */
+.toolbarEnd {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.zoom {
+  display: flex;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-panel);
+}
+
+.zoom button {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.zoom button:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-panel);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+/* The swatch is a line segment, drawn exactly as the edge it stands for
+   (码头 `dag.css:22-23`) — solid brand for a fork, dashed neutral otherwise. */
+.legend span::before {
+  display: inline-block;
+  width: 18px;
+  margin-right: 5px;
+  border-top: 2px solid var(--dsw-alias-brand-primary);
+  content: '';
+  vertical-align: middle;
+}
+
+.legend .derived::before {
+  border-top-style: dashed;
+  border-top-color: var(--dsw-alias-label-tertiary);
+}
+
+/* `overflow: visible` so an edge whose control points bulge past the layout
+   box is not clipped (码头 `dag.css:31`). */
+.edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--dsw-alias-border-l1);
+  stroke-width: 2;
+  marker-end: url(#dag-arrow);
+}
+
+/* 码头 `dag.css:35` paints a fork edge `#5c91cf`, a blue that reads as "this
+   one inherits the conversation"; DSH's brand accent is the token that already
+   carries that meaning across this plugin. */
+.edgeForked {
+  stroke: var(--dsw-alias-brand-primary);
+}
+
+/* 码头 `dag.css:33` — a dashed edge for the relation that does NOT inherit the
+   conversation. The dash pattern is the legend's swatch too, so the two agree. */
+.edgeDerived {
+  stroke-dasharray: 6 4;
+}
+
+.arrowHead {
+  fill: var(--dsw-alias-border-l1);
+}
+
+/* The faint stub that ties every root card back to a common left margin
+   (码头 `dag.css:34`), so a graph with several roots still reads as one tree. */
+.rootGuide {
+  fill: none;
+  stroke: var(--dsw-alias-border-l3);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+
+/* ============================================================
+   4. 搜索框（DagSearch.tsx）
+   ============================================================ */
+
+/* 码头 `dag.css:24`. The box is the toolbar's first child and the panel hangs
+   off it, so this element — not the panel — is the positioning context.
+   `.toolbarEnd`'s `margin-left: auto` keeps the zoom group pinned right
+   whether or not this box is rendered. */
+.search {
+  position: relative;
+  width: min(380px, 44vw);
+}
+
+/* `outline: none` only because the focus ring below replaces it with a visible
+   one: the overlay focuses this input on mount (D-4's replacement for Cmd+F),
+   so「焦点在哪」must be legible from the first frame. */
+.searchInput {
+  box-sizing: border-box;
+  width: 100%;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-panel);
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.searchInput::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.searchInput:focus {
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-brand-primary), var(--dsw-elevation-panel);
+}
+
+/* 码头 `dag.css:27`: an absolutely-positioned panel, so opening it never
+   reflows the toolbar or pushes the zoom group down the canvas. */
+.results {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  left: 0;
+  display: grid;
+  max-height: 350px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-prominent);
+}
+
+.option {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* One highlight for both ways of selecting a row — the arrow keys and the
+   pointer write the same state (码头 `DagSearch.tsx:32`), so hover must not
+   look different from 「↓ 停在这里」. */
+.option.isActive {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.optionTitle {
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The subtitle is the working directory ALONE — 码头's `Claude Code · cwd`
+   (`DagSearch.tsx:36`) has no DSH counterpart. See the component's module doc. */
+.optionPath,
+.searchEmpty {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchEmpty {
+  margin: 0;
+  padding: 8px 10px;
+}
+
+/* ============================================================
+   5. 浮层壳（DagOverlay.tsx）
+   ============================================================ */
+
+/* `position: fixed` + z-index 1200, painted from a `document.body` portal —
+   see `DagOverlay.tsx`'s module doc for why the seat's own `.overlayLayer`
+   (`AppFrame.module.css`, `position: absolute` + `z-index: 20`) is a stacking
+   context this could never escape from the inside. 1200 clears DSH's `Modal`
+   (1000), `Toast` (1100) and `Menu`'s portal (1100).
+
+   Opaque, not a scrim: the page behind is `inert` while this is up, so showing
+   it through would only invite clicks that go nowhere. */
+.overlay {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The strip that carries the title and the close button. It sits ABOVE the
+   canvas rather than over it because `.toolbar` already spans both top corners
+   of the canvas. */
+.overlayBar {
+  z-index: 1;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  background-color: var(--dsw-alias-bg-l1);
+  block-size: 44px;
+}
+
+.overlayTitle {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* A round button: the global `* { corner-shape: superellipse(1.5) }`
+   (ui-theme `corner-shape.css`) would otherwise squash it into a squircle, so
+   `corner-shape: round` rides in the SAME declaration as the radius. */
+.overlayClose {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  corner-shape: round;
+  background-color: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  inline-size: 28px;
+  block-size: 28px;
+}
+
+.overlayClose:hover {
+  background-color: var(--dsw-alias-fill-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* No active workbench tab at all — a different emptiness from the canvas's own
+   `.empty` (a tab that holds no sessions), which is why it does not reuse it:
+   there is no canvas here to be centred inside. */
+.overlayEmpty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+}
+
+/* ============================================================
+   6. 跨切面（保持在文件末尾）
+   ============================================================ */
+
+/* Zoomed all the way out, the small type is unreadable anyway and only costs
+   paint time — 码头 `dag.css:73` hides it with the same attribute-prefix test
+   against the canvas's own `data-scale` diagnostic. Keyed on the attribute
+   alone (not on a canvas class) so Task 10 stays free to name its root. */
+[data-scale^="0.4"] .preview,
+[data-scale^="0.4"] .meta,
+[data-scale^="0.4"] .path {
+  visibility: hidden;
+}
+
+/* 码头 `dag.css:91-94`. Later sections append their own rules here. */
+@media (prefers-reduced-motion: reduce) {
+  .canvas.isAnimating .world,
+  .card,
+  .aggregate {
+    transition-duration: 1ms;
+  }
+
+  .card.hasNotice::after,
+  .notice {
+    animation: none;
+  }
+}

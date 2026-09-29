@@ -1,0 +1,464 @@
+/* Workbench surfaces: task sidebar, scene tab bar, session strip. Colors and
+   spacing come from DSH alias tokens only. */
+
+.seatRoot {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sectionHead {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部整行的「新建工作区」，对齐码头侧栏顶栏那颗按钮的位置与分量。 */
+.newWorkspace {
+  margin: 8px 12px 4px;
+  justify-content: center;
+}
+
+/* Mirrors the stock browser's section header: label left, icon actions right. */
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 8px 0 12px;
+  flex: 0 0 auto;
+}
+
+.sectionLabel {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+  letter-spacing: 0.02em;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+}
+
+.railItem {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.railItem[data-active] {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.sidebarBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 12px;
+}
+
+.notice {
+  margin: 0 6px 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.noticeError {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.group + .group {
+  margin-top: 8px;
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 4px 0 2px;
+}
+
+.groupToggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.groupToggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.group[data-active] .groupToggle {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 120ms ease;
+}
+
+/* 工作区行的文件夹图标（码头 `FolderIcon`）。 */
+.folder {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 事项行的前导四线字形（码头 `workbench-item__icon`）。 */
+.rowGlyph {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.chevron[data-collapsed] {
+  transform: rotate(-90deg);
+}
+
+.groupTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taskRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 6px 0 22px;
+  border-radius: 6px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.taskRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.taskRow[data-active] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.taskTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pin {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.taskSlot {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* S5 Task 5: unread badge (码头 `.workbench-item__badge`, hierarchy.css:50)
+   — the red comes from the shared error token, not a literal rgb, so it
+   tracks DSH's own light/dark palette; the on-fill text stays static white
+   in both themes (same precedent as ui-conversation's send-button glyph). */
+.taskBadge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-error-primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.rowMenu {
+  opacity: 0;
+}
+
+.taskRow:hover .rowMenu,
+.taskRow:focus-within .rowMenu,
+.rowMenu[data-open] {
+  opacity: 1;
+}
+
+.emptyRow {
+  padding: 6px 6px 6px 22px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.emptyBlock {
+  margin: 24px 12px;
+  text-align: center;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.emptyTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  margin-bottom: 6px;
+}
+
+.emptyHint {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Stage */
+
+.stageCol {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tabBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.tabList {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.tab:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.tab[data-active] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* S5 Task 5: any session mounted under this scene has unread (码头
+   `.tab-status-dot`, hierarchy.css:99 — 8px, matching that tab's own 28px
+   height here too). Red comes from the shared error token, never a literal
+   rgb, so it tracks DSH's own light/dark palette. */
+.tabUnreadDot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-error-primary);
+}
+
+.tabClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.tab:hover .tabClose,
+.tab[data-active] .tabClose {
+  opacity: 1;
+}
+
+.tabClose:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.tabTools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+/* Session DAG / new-session pair, pinned to the tab bar's far right (mockup
+   `tabStrip`'s right-hand button group). */
+.tabActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  flex: 0 0 auto;
+}
+
+/* The center column's empty-scene fallback (no task/scene selected yet). */
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 4px 12px;
+  overflow-x: auto;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.stripEmpty {
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Fallback single pane: no Matou scene resolved yet, so the carousel has
+   nothing to lay out — DSH's own current-session conversation still gets
+   the remaining column space. */
+.fallbackPane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Dialog bits */
+
+.renameInput {
+  width: 100%;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.fieldError {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.confirmBody {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dangerButton {
+  background: var(--dsw-alias-state-error-primary);
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+
+.rowDag {
+  opacity: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+.taskRow:hover .rowDag,
+.taskRow:focus-within .rowDag { opacity: 1; }
+.rowDag:hover { background: var(--dsw-alias-bg-module-platform); }
+@media (hover: none) { .rowDag { opacity: 1; } }
+
+.workspaceUnread { flex: 0 0 7px; height: 7px; border-radius: 50%; background: var(--dsw-alias-brand-primary, #6285ed); }
