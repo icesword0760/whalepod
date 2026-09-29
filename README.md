@@ -66,7 +66,7 @@
 
 ### 使用桌面客户端
 
-当前开发包面向 **macOS Apple Silicon**。本仓库首次发布以源码为主，安装包另行发布；请勿把源码 ZIP 当成 App。
+当前开发包面向 **macOS Apple Silicon**。安装包见 [Releases](https://github.com/icesword0760/whalepod/releases)。下载 `mac-arm64.dmg`，打开后将 App 拖入 Applications；请勿把源码 ZIP 当成 App。
 
 现有测试安装包使用本地临时签名，尚未完成 Apple 公证。正式分发还需要补齐签名、公证及独立机器上的首次安装验证。
 
